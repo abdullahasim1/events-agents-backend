@@ -1,5 +1,11 @@
 const { FETCH_TIMEOUT_MS, buildSearchQuery } = require("./utils");
 
+const extractTime = (str = "") => {
+  if (!str) return "";
+  const m = str.match(/\b\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b(?:\s*[-–—to]+\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b)?/i);
+  return m ? m[0].trim() : "";
+};
+
 /**
  * 🚀 SERPAPI GOOGLE SEARCH:
  * Queries Google Search & Google Events for upcoming live events
@@ -31,24 +37,32 @@ async function fetchSerpApiEvents(
 
   // 3. Agar Google Events ka widget mojood ho to structured data lein
   if (data.events_results?.length) {
-    return data.events_results.map((e) => ({
-      title: e.title,
-      date: e.date?.when || e.date?.start_date || "",
-      venue: e.venue?.name || e.address?.join(", ") || "",
-      snippet: e.description || "",
-      url: e.ticket_info?.[0]?.link || e.link || "",
-      source: "Google Events",
-    }));
+    return data.events_results.map((e) => {
+      const timeStr = extractTime(e.date?.when || "") || extractTime(e.description || "");
+      return {
+        title: e.title,
+        date: e.date?.start_date || e.date?.when || "",
+        time: timeStr,
+        venue: e.venue?.name || e.address?.join(", ") || "",
+        snippet: e.description || "",
+        url: e.ticket_info?.[0]?.link || e.link || "",
+        source: "Google Events",
+      };
+    });
   }
 
   // 4. Widget na hone par standard organic search results map karein
-  return (data.organic_results || []).map((e) => ({
-    title: e.title,
-    date: e.date || "",
-    snippet: e.snippet || "",
-    url: e.link || "",
-    source: "Google Search",
-  }));
+  return (data.organic_results || []).map((e) => {
+    const timeStr = extractTime(e.snippet || "") || extractTime(e.date || "");
+    return {
+      title: e.title,
+      date: e.date || "",
+      time: timeStr,
+      snippet: e.snippet || "",
+      url: e.link || "",
+      source: "Google Search",
+    };
+  });
 }
 
 module.exports = { fetchSerpApiEvents };

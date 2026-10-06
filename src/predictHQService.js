@@ -9,6 +9,18 @@ const get = (url, key) =>
     }).on("error", rej)
   );
 
+function formatIsoTime(isoStr) {
+  if (!isoStr || !isoStr.includes("T")) return "";
+  const timePart = isoStr.split("T")[1];
+  if (!timePart) return "";
+  const [h, m] = timePart.split(":");
+  const hour = parseInt(h, 10);
+  if (isNaN(hour)) return "";
+  const period = hour >= 12 ? "PM" : "AM";
+  const h12 = hour % 12 || 12;
+  return `${h12}:${m} ${period}`;
+}
+
 /**
  * 🚀 PREDICTHQ SEARCH (Direct 1 Single Call):
  * Queries PredictHQ Events directly with location & categories (No Places API overhead)
@@ -20,16 +32,23 @@ async function fetchPredictHQEvents(location, eventType, { startDate, endDate } 
   // 1 single direct API call to PredictHQ Events
   const data = await get(`https://api.predicthq.com/v1/events/?q=${encodeURIComponent(q)}${dateParams}&limit=50`, key);
 
-  return (data.results || []).map((e) => ({
-    title: e.title,
-    category: e.category || "General",
-    date: e.start_local || "",
-    venue: (e.entities || []).find((x) => x.type === "venue")?.name || e.geo?.address?.formatted_address || "",
-    city: location,
-    snippet: e.description || `Event in ${location}`,
-    url: `https://www.google.com/search?q=${encodeURIComponent(`${e.title} ${location}`)}`,
-    source: "PredictHQ",
-  }));
+  return (data.results || []).map((e) => {
+    const startTime = formatIsoTime(e.start_local || e.start);
+    const endTime = formatIsoTime(e.end_local || e.end);
+    const realTime = startTime && endTime && startTime !== endTime ? `${startTime} - ${endTime}` : (startTime || "");
+
+    return {
+      title: e.title,
+      category: e.category || "General",
+      date: e.start_local ? e.start_local.slice(0, 10) : "",
+      time: realTime,
+      venue: (e.entities || []).find((x) => x.type === "venue")?.name || e.geo?.address?.formatted_address || "",
+      city: location,
+      snippet: e.description || `Event in ${location}`,
+      url: `https://www.google.com/search?q=${encodeURIComponent(`${e.title} ${location}`)}`,
+      source: "PredictHQ",
+    };
+  });
 }
 
 module.exports = { fetchPredictHQEvents };

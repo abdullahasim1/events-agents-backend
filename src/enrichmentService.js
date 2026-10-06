@@ -42,16 +42,16 @@ async function enrichContacts(events) {
     }
   }
 
-  // Final normalization: If contactInfo is still missing or "Not available", fallback to ticketUrl
+  // Final normalization: Fallback contactInfo to ticketUrl if missing, clean up TBA time
   for (const ev of events) {
     if (!ev.contactInfo || /not available|n\/a|^-$/i.test(String(ev.contactInfo).trim())) {
       ev.contactInfo = ev.ticketUrl && !ev.ticketUrl.includes("google.com/search")
         ? ev.ticketUrl
-        : (ev.ticketUrl || "Check Event Page");
+        : (ev.ticketUrl || "");
     }
 
-    if (!ev.time || /^(tba|tbh|-)$/i.test(String(ev.time).trim())) {
-      ev.time = "09:00 AM - 05:00 PM";
+    if (/^(tba|tbh|-)$/i.test(String(ev.time || "").trim())) {
+      ev.time = "";
     }
   }
 
