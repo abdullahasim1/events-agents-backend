@@ -2,14 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const { findEvents } = require("./agentService");
 const { DEFAULT_DAYS } = require("./utils");
-const {
-  initDb,
-  upsertEvents,
-  getAllEvents,
-  updateEventStatus,
-  deleteEvent,
-  clearAllEvents,
-} = require("./db");
+const { initDb, upsertEvents, getAllEvents, clearAllEvents } = require("./db");
 
 const app = express();
 
@@ -20,19 +13,29 @@ app.use(express.json());
 initDb().catch((e) => console.error("⚠️ [DB Init Warning]:", e.message));
 
 /**
- * 🚀 MAIN SEARCH CONTROLLER:
- * Handles incoming search requests (single or multi-location/category)
+ * 🚀 SEARCH & FETCH CONTROLLER:
+ * Handles incoming search requests and DB retrieval
  */
-const handleSearch = async (req, res) => {
+const handleEvents = async (req, res) => {
   const start = Date.now();
   try {
     const p = { ...req.query, ...req.body };
 
-    // 1. Inputs normalize karein (handles both array and comma-separated string)
-    const locations = [p.locations || p.cities || p.location || p.city || ""].flat().join(",").split(",").map((s) => s.trim()).filter(Boolean);
-    const eventTypes = [p.eventTypes || p.types || p.eventType || p.type || ""].flat().join(",").split(",").map((s) => s.trim()).filter(Boolean);
+    const locations = [p.locations || p.cities || p.location || p.city || ""]
+      .flat()
+      .join(",")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    // Agar search parameters nahi diye gaye aur yeh GET request hai, to database se saved events return karein
+    const eventTypes = [p.eventTypes || p.types || p.eventType || p.type || ""]
+      .flat()
+      .join(",")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    // If no search parameters provided on GET, return saved events from DB
     if (!locations.length && !eventTypes.length && req.method === "GET") {
       const saved = await getAllEvents();
       return res.status(200).json({ success: true, count: saved.length, events: saved, fromDb: true });
@@ -42,12 +45,13 @@ const handleSearch = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Both "location" and "eventType" are required.' });
     }
 
-    console.log(`📥 [Search] Locations (${locations.length}): ${locations.join(", ")} | Types (${eventTypes.length}): ${eventTypes.join(", ")}`);
+    // Run parallel search agents + Claude AI
+    const events = await findEvents(locations, eventTypes, {
+      startDate: p.startDate || p.date || null,
+      days: parseInt(p.days, 10) || DEFAULT_DAYS,
+    });
 
-    // 2. MAIN WORK: Agent orchestrator ko call karein (Search APIs + Claude AI)
-    const events = await findEvents(locations, eventTypes, { startDate: p.startDate || p.date || null, days: parseInt(p.days, 10) || DEFAULT_DAYS });
-
-    // 3. PostgreSQL Database mein events save/upsert karein
+    // Save/upsert to PostgreSQL
     try {
       if (events && events.length) {
         await upsertEvents(events);
@@ -59,7 +63,6 @@ const handleSearch = async (req, res) => {
     const sec = ((Date.now() - start) / 1000).toFixed(2);
     console.log(`✅ [Search] Returned & Saved ${events.length} events in ${sec}s`);
 
-    // 4. Return verified events
     return res.status(200).json({ success: true, count: events.length, events });
   } catch (error) {
     console.error("❌ [Server Error]:", error.message);
@@ -67,20 +70,11 @@ const handleSearch = async (req, res) => {
   }
 };
 
-// Router setup: Handles both `/api/*` and root paths
 const router = express.Router();
+
 router.get("/health", (_, res) => res.json({ status: "ok", message: "Events Agent API is running!" }));
-
-// Saved events routes
-router.get("/events/saved", async (_, res) => {
-  try {
-    const events = await getAllEvents();
-    res.json({ success: true, count: events.length, events });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
+router.get("/events", handleEvents);
+router.post("/events", handleEvents);
 router.delete("/events", async (_, res) => {
   try {
     await clearAllEvents();
@@ -89,28 +83,6 @@ router.delete("/events", async (_, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-
-router.delete("/events/:id", async (req, res) => {
-  try {
-    await deleteEvent(req.params.id);
-    res.json({ success: true, message: `Event ${req.params.id} deleted.` });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.patch("/events/:id/status", async (req, res) => {
-  try {
-    const { status } = req.body;
-    await updateEventStatus(req.params.id, status || "Need to contact");
-    res.json({ success: true, message: "Event status updated." });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.post("/events", handleSearch);
-router.get("/events", handleSearch);
 
 app.use("/api", router);
 app.use("/", router);

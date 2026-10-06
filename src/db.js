@@ -12,14 +12,8 @@ pool.on("error", (err) => {
   console.error("❌ [PostgreSQL Pool Error]:", err.message);
 });
 
-/**
- * Initialize table if not exists
- */
 async function initDb() {
-  if (!process.env.DATABASE_URL) {
-    console.warn("⚠️ DATABASE_URL not set; skipping DB init.");
-    return;
-  }
+  if (!process.env.DATABASE_URL) return;
   const query = `
     CREATE TABLE IF NOT EXISTS events (
       id VARCHAR(100) PRIMARY KEY,
@@ -35,7 +29,7 @@ async function initDb() {
       registration_deadline TEXT,
       proposal_deadline TEXT,
       contact_info TEXT,
-      status VARCHAR(50) DEFAULT 'Need to contact',
+      status VARCHAR(50) DEFAULT 'Confirmed',
       description TEXT,
       ticket_url TEXT,
       source TEXT,
@@ -46,15 +40,11 @@ async function initDb() {
   `;
   try {
     await pool.query(query);
-    console.log("✅ [DB] PostgreSQL tables verified.");
   } catch (err) {
     console.error("❌ [DB Init Error]:", err.message);
   }
 }
 
-/**
- * Upsert events into PostgreSQL
- */
 async function upsertEvents(events = []) {
   if (!process.env.DATABASE_URL || !events.length) return events;
 
@@ -82,7 +72,7 @@ async function upsertEvents(events = []) {
         city = COALESCE(EXCLUDED.city, events.city),
         registration_deadline = COALESCE(EXCLUDED.registration_deadline, events.registration_deadline),
         proposal_deadline = COALESCE(EXCLUDED.proposal_deadline, events.proposal_deadline),
-        contact_info = CASE WHEN EXCLUDED.contact_info != 'Not available' AND EXCLUDED.contact_info != '' THEN EXCLUDED.contact_info ELSE events.contact_info END,
+        contact_info = CASE WHEN EXCLUDED.contact_info != '' THEN EXCLUDED.contact_info ELSE events.contact_info END,
         description = COALESCE(EXCLUDED.description, events.description),
         ticket_url = COALESCE(EXCLUDED.ticket_url, events.ticket_url),
         source = COALESCE(EXCLUDED.source, events.source),
@@ -116,7 +106,6 @@ async function upsertEvents(events = []) {
       ]);
     }
     await client.query("COMMIT");
-    console.log(`💾 [DB] Successfully saved/updated ${events.length} events in PostgreSQL.`);
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("❌ [DB Save Error]:", err.message);
@@ -125,9 +114,6 @@ async function upsertEvents(events = []) {
   }
 }
 
-/**
- * Fetch all saved events from PostgreSQL
- */
 async function getAllEvents() {
   if (!process.env.DATABASE_URL) return [];
   const res = await pool.query(`
@@ -162,25 +148,6 @@ async function getAllEvents() {
   return res.rows;
 }
 
-/**
- * Update event status
- */
-async function updateEventStatus(id, status) {
-  if (!process.env.DATABASE_URL) return;
-  await pool.query("UPDATE events SET status = $1, updated_at = NOW() WHERE id = $2;", [status, id]);
-}
-
-/**
- * Delete single event
- */
-async function deleteEvent(id) {
-  if (!process.env.DATABASE_URL) return;
-  await pool.query("DELETE FROM events WHERE id = $1;", [id]);
-}
-
-/**
- * Delete all events from PostgreSQL
- */
 async function clearAllEvents() {
   if (!process.env.DATABASE_URL) return;
   await pool.query("TRUNCATE TABLE events;");
@@ -191,8 +158,5 @@ module.exports = {
   initDb,
   upsertEvents,
   getAllEvents,
-  updateEventStatus,
-  deleteEvent,
   clearAllEvents,
 };
-
