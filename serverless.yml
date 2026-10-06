@@ -1,0 +1,35 @@
+service: events-agent-backend
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  memorySize: 512
+  timeout: 29 # API Gateway HTTP API max integration limit 29s
+  environment:
+    NODE_ENV: production
+    ANTHROPIC_API_KEY: ${env:ANTHROPIC_API_KEY, ''}
+    SERPAPI_KEY: ${env:SERPAPI_KEY, ''}
+    TAVILY_API_KEY: ${env:TAVILY_API_KEY, ''}
+    PREDICTHQ_API_KEY: ${env:PREDICTHQ_API_KEY, ''}
+
+functions:
+  api:
+    handler: handler.handler
+    events:
+      # HTTP API (Fast, Modern & Cheaper)
+      - httpApi:
+          path: /{proxy+}
+          method: ANY
+      - httpApi:
+          path: /
+          method: ANY
+
+package:
+  patterns:
+    - '!test/**'
+    - '!.git/**'
+    - '!.env'
+    - '!README.md'

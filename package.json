@@ -1,0 +1,21 @@
+{
+  "name": "events-agent-backend",
+  "version": "1.0.0",
+  "main": "handler.js",
+  "scripts": {
+    "start": "node --no-network-family-autoselection src/server.js",
+    "dev": "node --no-network-family-autoselection --watch src/server.js",
+    "deploy": "serverless deploy",
+    "deploy:prod": "serverless deploy --stage prod"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.5",
+    "express": "^5.2.1",
+    "serverless-http": "^4.0.0"
+  }
+}
