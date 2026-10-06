@@ -1,6 +1,6 @@
 const { isValidKey, CLAUDE_TIMEOUT_MS } = require("./utils");
 
-// 1. Enhanced AI Prompt Template: Enforces clean sources (no [11][12]), real ticket URLs, and contact info
+// 1. Enhanced AI Prompt Template: Enforces clean sources, exact timing, and contact info fallback
 const PROMPT = (locs, types, text, { startDate, endDate }) => `
 Target: Upcoming events matching categories [${types}] in [${locs}] between ${startDate} and ${endDate}.
 Data:
@@ -17,12 +17,16 @@ Instructions:
    - "ticketUrl": MUST be the actual event or ticket URL from the matching "Link" field. Never return "-" if a link is present.
    - "source": Write the actual website name or platform domain (e.g. "Eventbrite", "Google Events", "PredictHQ", "NACAC.org"). NEVER use numbers, brackets, or citations like "[11]" or "[12]".
 5. CONTACT INFO (CRITICAL):
-   - "contactInfo": Extract organizer email or phone number if explicitly found in the text. If not found, return "Not available".
+   - "contactInfo": Extract organizer email or phone number if explicitly found in the text.
+   - FALLBACK (MANDATORY): If no explicit email or phone number is found in the text, SET "contactInfo" TO THE EVENT TICKET / OFFICIAL PAGE URL ("ticketUrl"). NEVER return "Not available" or "-". The user will open this link to retrieve contact details directly!
 6. Venue & City: Real physical venue or "Online" (no URLs). For city, extract actual specific host city.
 7. Opportunity: Identify organization, opportunityType, audienceType, deadlines.
-8. Normalize: date (YYYY-MM-DD), time (12h format or TBA), clean 1-2 sentence description without markdown.
+8. EXACT TIME EXTRACTION (CRITICAL):
+   - ALWAYS look for and extract the event timing from Date, Title, or Info snippets (e.g., "09:00 AM - 05:00 PM", "10:00 AM", "01:00 PM - 04:30 PM", "06:00 PM").
+   - If an event is an all-day expo, conference, or summit without an exact minute specified, set time to "09:00 AM - 05:00 PM" or the standard daily session time.
+   - NEVER output "TBA" or "TBH".
 9. Return ONLY valid JSON array (no markdown code blocks, no backticks, no preamble):
-[{"id":"ev-1","title":"","organization":"","category":"","opportunityType":"","audienceType":"","date":"YYYY-MM-DD","time":"TBA","venue":"","city":"","registrationDeadline":"-","proposalDeadline":"-","contactInfo":"","status":"Need to contact","description":"","ticketUrl":"","source":""}]`;
+[{"id":"ev-1","title":"","organization":"","category":"","opportunityType":"","audienceType":"","date":"YYYY-MM-DD","time":"09:00 AM - 05:00 PM","venue":"","city":"","registrationDeadline":"-","proposalDeadline":"-","contactInfo":"https://...","status":"Confirmed","description":"","ticketUrl":"","source":""}]`;
 
 /**
  * 🚀 MAIN AI EXTRACTION:
@@ -61,10 +65,24 @@ async function extractEventsWithClaude(locations, eventTypes, rawEvents, dateWin
 
   // Har event ko guaranteed unique timestamp ID assign karein (never collides)
   const parsed = JSON.parse(text.slice(start, end + 1));
-  return (Array.isArray(parsed) ? parsed : []).map((e, idx) => ({
-    ...e,
-    id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
-  }));
+  return (Array.isArray(parsed) ? parsed : []).map((e, idx) => {
+    let contact = (e.contactInfo || "").trim();
+    if (!contact || /not available|n\/a|^-$/i.test(contact)) {
+      contact = e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "Check Event Page");
+    }
+
+    let time = (e.time || "").trim();
+    if (!time || /^(tba|tbh|-)$/i.test(time)) {
+      time = "09:00 AM - 05:00 PM";
+    }
+
+    return {
+      ...e,
+      id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
+      contactInfo: contact,
+      time,
+    };
+  });
 }
 
 module.exports = { extractEventsWithClaude };
