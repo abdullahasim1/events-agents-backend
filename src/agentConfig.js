@@ -7,9 +7,11 @@
  */
 
 const DEFAULT_LOCATIONS = [
+  "Minneapolis Convention Center, MN",
+  "St. Cloud River’s Edge Convention Center, MN",
+  "Saint Paul RiverCentre, MN",
   "Minneapolis, MN",
   "St. Paul, MN",
-  "St. Cloud, MN",
   "Minnesota",
 ];
 
