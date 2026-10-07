@@ -37,14 +37,22 @@ async function extractEventsWithClaude(locations, eventTypes, rawEvents, dateWin
 
   const locStr = [locations].flat().join(", ") || "Global";
   const typeStr = [eventTypes].flat().join(", ") || "General";
-  const rawText = rawEvents
+
+  // Pre-filter raw events to remove exact title duplicates before sending to Claude
+  const seenRaw = new Set();
+  const dedupedRaw = rawEvents.filter((e) => {
+    const k = (e.title || "").trim().toLowerCase();
+    return k && !seenRaw.has(k) && seenRaw.add(k);
+  }).slice(0, 70);
+
+  const rawText = dedupedRaw
     .map(
       (e, i) =>
         `Item #${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Time: ${e.time || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || e.snippet || ""}`
     )
     .join("\n");
 
-  console.log(`   🤖 [Claude AI] Verifying & Extracting ${rawEvents.length} items for [${locStr}]...`);
+  console.log(`   🤖 [Claude AI] Verifying & Extracting ${dedupedRaw.length} unique items for [${locStr}]...`);
 
   // Anthropic Claude Messages API call
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -55,7 +63,7 @@ async function extractEventsWithClaude(locations, eventTypes, rawEvents, dateWin
       max_tokens: 8192,
       messages: [{ role: "user", content: PROMPT(locStr, typeStr, rawText, dateWindow) }],
     }),
-    signal: AbortSignal.timeout(CLAUDE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(50000),
   });
 
   const data = await res.json();

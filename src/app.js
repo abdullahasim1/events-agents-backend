@@ -12,6 +12,8 @@ app.use(express.json());
 // Initialize DB schema on cold start (non-blocking)
 initDb().catch((e) => console.error("⚠️ [DB Init Warning]:", e.message));
 
+const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
+
 /**
  * 🚀 SEARCH & FETCH CONTROLLER:
  * Handles incoming search requests and DB retrieval
@@ -21,34 +23,36 @@ const handleEvents = async (req, res) => {
   try {
     const p = { ...req.query, ...req.body };
 
-    const locations = [p.locations || p.cities || p.location || p.city || ""]
+    let locations = [p.locations || p.cities || p.location || p.city || ""]
       .flat()
       .join(",")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
 
-    const eventTypes = [p.eventTypes || p.types || p.eventType || p.type || ""]
+    let eventTypes = [p.eventTypes || p.types || p.eventType || p.type || ""]
       .flat()
       .join(",")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
 
-    // If no search parameters provided on GET, return saved events from DB
-    if (!locations.length && !eventTypes.length && req.method === "GET") {
+    // If pure GET with no params and not an explicit run trigger, return saved events from DB
+    if (!locations.length && !eventTypes.length && req.method === "GET" && !p.run) {
       const saved = await getAllEvents();
       return res.status(200).json({ success: true, count: saved.length, events: saved, fromDb: true });
     }
 
-    if (!locations.length || !eventTypes.length) {
-      return res.status(400).json({ success: false, message: 'Both "location" and "eventType" are required.' });
-    }
+    // Default to Hardcoded Centralized Config if triggered with 1-click (e.g. POST /events or ?run=true)
+    if (!locations.length) locations = DEFAULT_LOCATIONS;
+    if (!eventTypes.length) eventTypes = DEFAULT_EVENT_TYPES;
+
+    const days = parseInt(p.days, 10) || DEFAULT_DAYS;
 
     // Run parallel search agents + Claude AI
     const events = await findEvents(locations, eventTypes, {
       startDate: p.startDate || p.date || null,
-      days: parseInt(p.days, 10) || DEFAULT_DAYS,
+      days,
     });
 
     // Save/upsert to PostgreSQL

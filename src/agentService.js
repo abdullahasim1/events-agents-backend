@@ -5,12 +5,14 @@ const { extractEventsWithClaude } = require("./claudeService");
 const { isValidKey, getDateWindow } = require("./utils");
 const { enrichContacts } = require("./enrichmentService");
 
-// 1. Search Providers Registry
-const PROVIDERS = [
-  { name: "SerpApi", key: process.env.SERPAPI_KEY, fn: fetchSerpApiEvents },
-  { name: "Tavily", key: process.env.TAVILY_API_KEY, fn: fetchTavilyEvents },
-  { name: "PredictHQ", key: process.env.PREDICTHQ_API_KEY, fn: fetchPredictHQEvents },
-];
+// 1. Search Providers Registry getter
+function getProviders() {
+  return [
+    { name: "SerpApi", key: process.env.SERPAPI_KEY, fn: fetchSerpApiEvents },
+    { name: "Tavily", key: process.env.TAVILY_API_KEY, fn: fetchTavilyEvents },
+    { name: "PredictHQ", key: process.env.PREDICTHQ_API_KEY, fn: fetchPredictHQEvents },
+  ];
+}
 
 /**
  * 🚀 MAIN ORCHESTRATOR: Parallel Search + Claude AI Extraction
@@ -20,8 +22,8 @@ async function findEvents(locationsInput, eventTypesInput, { days, startDate } =
   const locations = [locationsInput].flat().map((s) => String(s).trim()).filter(Boolean);
   const eventTypes = [eventTypesInput].flat().map((s) => String(s).trim()).filter(Boolean);
 
-  const active = PROVIDERS.filter((p) => isValidKey(p.key));
-  console.log(`🔍 [Agent] Providers: ${active.length} | Locations: ${locations.join(", ")}`);
+  const active = getProviders().filter((p) => isValidKey(p.key));
+  console.log(`🔍 [Agent] Providers: ${active.length} (${active.map(a => a.name).join(", ")}) | Locations: ${locations.join(", ")}`);
 
   // 1. Parallel raw search from all active providers
   const rawEvents = (
