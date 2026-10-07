@@ -23,7 +23,9 @@ Instructions:
 5. CONTACT INFO:
    - "contactInfo": Extract organizer email or phone number if explicitly found in the text.
    - FALLBACK: If no explicit email or phone number is found, SET "contactInfo" TO THE EVENT'S TICKET / OFFICIAL PAGE URL ("ticketUrl"). The user will open this link to retrieve contact details directly.
-6. Venue & City: Real physical venue or "Online" (no URLs). For city, extract actual specific host city.
+6. Venue & Location:
+   - "venue": Extract the exact physical venue where the event is happening inside the city (e.g. "Minneapolis Convention Center", "Expo Center Johar Town", "Saint Paul College", "River’s Edge Convention Center", "Graduate by Hilton", or "Online").
+   - "city": The specific host city (e.g. "Minneapolis, MN", "St. Paul, MN", "St. Cloud, MN", "Lahore").
 7. Opportunity: Identify organization, opportunityType, audienceType, deadlines.
 8. REAL DYNAMIC TIME (NO HARDCODING):
    - Extract the real event start and end time (e.g. "10:00 AM", "01:00 PM - 05:00 PM", "08:30 AM EST", "19:00") directly from the Date, Time, or Info snippets.
