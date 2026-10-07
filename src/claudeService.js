@@ -24,8 +24,8 @@ Instructions:
    - "contactInfo": Extract organizer email or phone number if explicitly found in the text.
    - FALLBACK: If no explicit email or phone number is found, SET "contactInfo" TO THE EVENT'S TICKET / OFFICIAL PAGE URL ("ticketUrl"). The user will open this link to retrieve contact details directly.
 6. Venue & Location:
-   - "venue": Extract the exact physical venue where the event is happening inside the city (e.g. "Minneapolis Convention Center", "Expo Center Johar Town", "Saint Paul College", "River’s Edge Convention Center", "Graduate by Hilton", or "Online").
-   - "city": The specific host city (e.g. "Minneapolis, MN", "St. Paul, MN", "St. Cloud, MN", "Lahore").
+   - "venue": Extract the exact physical venue where the event is happening inside the city (e.g. "Minneapolis Convention Center", "Saint Paul College", "River’s Edge Convention Center", "Graduate by Hilton", or "Online").
+   - "city": The specific host city (e.g. "Minneapolis, MN", "St. Paul, MN", "St. Cloud, MN").
 7. Opportunity: Identify organization, opportunityType, audienceType, deadlines.
 8. REAL DYNAMIC TIME (NO HARDCODING):
    - Extract the real event start and end time (e.g. "10:00 AM", "01:00 PM - 05:00 PM", "08:30 AM EST", "19:00") directly from the Date, Time, or Info snippets.
@@ -37,43 +37,60 @@ Instructions:
  * 🚀 MAIN AI EXTRACTION:
  * Calls Claude Haiku Messages API to verify, deduplicate, and extract clean events from raw data
  */
-async function extractEventsWithClaude(locations, eventTypes, rawEvents, dateWindow) {
+async function extractEventsWithClaude(
+  locations,
+  eventTypes,
+  rawEvents,
+  dateWindow,
+) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!isValidKey(apiKey)) throw new Error("ANTHROPIC_API_KEY is missing or invalid.");
+  if (!isValidKey(apiKey))
+    throw new Error("ANTHROPIC_API_KEY is missing or invalid.");
 
   const locStr = [locations].flat().join(", ") || "Global";
   const typeStr = [eventTypes].flat().join(", ") || "General";
 
   // Pre-filter raw events to remove exact title duplicates before sending to Claude
   const seenRaw = new Set();
-  const dedupedRaw = rawEvents.filter((e) => {
-    const k = (e.title || "").trim().toLowerCase();
-    return k && !seenRaw.has(k) && seenRaw.add(k);
-  }).slice(0, 70);
+  const dedupedRaw = rawEvents
+    .filter((e) => {
+      const k = (e.title || "").trim().toLowerCase();
+      return k && !seenRaw.has(k) && seenRaw.add(k);
+    })
+    .slice(0, 140);
 
   const rawText = dedupedRaw
     .map(
       (e, i) =>
-        `Item #${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Time: ${e.time || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || e.snippet || ""}`
+        `Item #${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Time: ${e.time || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || e.snippet || ""}`,
     )
     .join("\n");
 
-  console.log(`   🤖 [Claude AI] Verifying & Extracting ${dedupedRaw.length} unique items for [${locStr}]...`);
+  console.log(
+    `   🤖 [Claude AI] Verifying & Extracting ${dedupedRaw.length} unique items for [${locStr}]...`,
+  );
 
   // Anthropic Claude Messages API call
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
     body: JSON.stringify({
       model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
       max_tokens: 8192,
-      messages: [{ role: "user", content: PROMPT(locStr, typeStr, rawText, dateWindow) }],
+      messages: [
+        { role: "user", content: PROMPT(locStr, typeStr, rawText, dateWindow) },
+      ],
     }),
     signal: AbortSignal.timeout(50000),
   });
 
   const data = await res.json();
-  if (!res.ok) throw new Error(`Claude (${res.status}): ${data.error?.message || ""}`);
+  if (!res.ok)
+    throw new Error(`Claude (${res.status}): ${data.error?.message || ""}`);
 
   // Response text se JSON array extract karein
   const text = (data.content || []).map((c) => c.text || "").join("");
@@ -100,7 +117,10 @@ async function extractEventsWithClaude(locations, eventTypes, rawEvents, dateWin
   return validList.map((e, idx) => {
     let contact = (e.contactInfo || "").trim();
     if (!contact || /not available|n\/a|^-$/i.test(contact)) {
-      contact = e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "");
+      contact =
+        e.ticketUrl && !e.ticketUrl.includes("google.com/search")
+          ? e.ticketUrl
+          : e.ticketUrl || "";
     }
 
     let time = (e.time || "").trim();
