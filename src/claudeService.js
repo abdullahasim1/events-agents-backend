@@ -140,12 +140,15 @@ async function extractEventsWithClaude(
       time = "";
     }
 
+    const city = e.city || e.location || "";
     return {
       ...e,
       id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
+      city,
+      location: city,
       contactInfo: contact,
       time,
-      proximityTier: getProximityRank(e.city || e.location),
+      proximityTier: getProximityRank(city),
     };
   });
 
