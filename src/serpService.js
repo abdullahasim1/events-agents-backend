@@ -16,12 +16,12 @@ async function fetchSerpApiEvents(
   dateWindow = {},
   apiKey = process.env.SERPAPI_KEY,
 ) {
-  // 1. Google search query build karein
+  const timeQualifier = [dateWindow.monthName, dateWindow.year].filter(Boolean).join(" ");
   const query = encodeURIComponent(
     buildSearchQuery(
       eventType,
       location,
-      dateWindow.year || new Date().getFullYear(),
+      timeQualifier || new Date().getFullYear(),
     ),
   );
 

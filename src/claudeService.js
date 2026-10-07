@@ -7,7 +7,7 @@ Data:
 ${text}
 
 Instructions:
-1. Filter: Keep ONLY verified upcoming events occurring between ${startDate} and ${endDate}. Discard past events.
+1. Filter: Keep verified upcoming events that occur or overlap between ${startDate} and ${endDate} (including multi-day conferences that are active during this period). Discard clearly past events.
 2. Category: Classify each event's "category" into the most matching category from [${types}].
 3. STRICT DEDUPLICATION & MERGING:
    - Each real-world event must appear EXACTLY ONCE. NEVER output duplicate or near-duplicate events.
