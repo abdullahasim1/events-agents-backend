@@ -9,13 +9,12 @@ const DEFAULT_LOCATIONS = [
   "Minneapolis, MN",
   "St. Paul, MN",
   "Bloomington, MN",
-  "Maple Grove, MN",
+  "Edina, MN",
   "Roseville, MN",
+  "Maple Grove, MN",
   "Minnetonka, MN",
   "Plymouth, MN",
   "St. Cloud, MN",
-  "Twin Cities, MN",
-  "Edina, Minnesota",
   "Minnesota",
 ];
 
@@ -36,9 +35,9 @@ const DEFAULT_EVENT_TYPES = [
 const DEFAULT_DAYS = 7; // Exactly next 7 days
 
 // Broad domain keywords for per-city chunked search.
-// One broad query per provider per city maximizes recall; Claude then
-// classifies every event into an exact DEFAULT_EVENT_TYPES entry.
-const BROAD_QUERY_KEYWORDS = "health conferences summits workshops expos";
+// Captures health, mental health, education, counseling, and disabilities across providers;
+// Claude then classifies every event strictly into an exact DEFAULT_EVENT_TYPES entry.
+const BROAD_QUERY_KEYWORDS = "health education mental counseling disabilities conference summit expo";
 
 module.exports = {
   DEFAULT_LOCATIONS,
