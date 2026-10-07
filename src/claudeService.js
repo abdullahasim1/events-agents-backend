@@ -92,13 +92,25 @@ async function extractEventsWithClaude(
   if (!res.ok)
     throw new Error(`Claude (${res.status}): ${data.error?.message || ""}`);
 
-  // Response text se JSON array extract karein
+  // Response text se valid JSON array extract karein
   const text = (data.content || []).map((c) => c.text || "").join("");
   const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1) return [];
+  if (start === -1) return [];
 
-  const parsed = JSON.parse(text.slice(start, end + 1));
+  let parsed = [];
+  // Scan backwards for the matching closing bracket
+  for (let end = text.lastIndexOf("]"); end > start; end = text.lastIndexOf("]", end - 1)) {
+    try {
+      const candidate = JSON.parse(text.slice(start, end + 1));
+      if (Array.isArray(candidate)) {
+        parsed = candidate;
+        break;
+      }
+    } catch {
+      // continue scanning backwards
+    }
+  }
+
   const rawList = Array.isArray(parsed) ? parsed : [];
 
   // 🛡️ STRICT CODE-LEVEL DATE FILTER:
