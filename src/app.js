@@ -1,8 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const { findEvents } = require("./agentService");
-const { DEFAULT_DAYS } = require("./utils");
 const { initDb, upsertEvents, getAllEvents, clearAllEvents } = require("./db");
+const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
 
 const app = express();
 
@@ -11,8 +11,6 @@ app.use(express.json());
 
 // Initialize DB schema on cold start (non-blocking)
 initDb().catch((e) => console.error("⚠️ [DB Init Warning]:", e.message));
-
-const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
 
 /**
  * 🚀 SEARCH & FETCH CONTROLLER:
