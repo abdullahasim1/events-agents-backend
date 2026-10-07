@@ -34,14 +34,18 @@ const DEFAULT_EVENT_TYPES = [
 
 const DEFAULT_DAYS = 7; // Exactly next 7 days
 
-// Broad domain keywords for per-city chunked search.
-// Captures health, mental health, education, counseling, and disabilities across providers;
-// Claude then classifies every event strictly into an exact DEFAULT_EVENT_TYPES entry.
-const BROAD_QUERY_KEYWORDS = "health education mental counseling disabilities conference summit expo";
+// High-yield search queries per city chunk:
+// 1. Core health, education, and disabilities conference search
+// 2. Specialized outreach (OCD, law enforcement wellness, youth mental health, autism, admissions)
+const BROAD_QUERIES = [
+  "health education mental counseling disabilities conference summit expo",
+  "OCD autism wellness summit law enforcement college admission conference",
+];
 
 module.exports = {
   DEFAULT_LOCATIONS,
   DEFAULT_EVENT_TYPES,
   DEFAULT_DAYS,
-  BROAD_QUERY_KEYWORDS,
+  BROAD_QUERIES,
+  BROAD_QUERY_KEYWORDS: BROAD_QUERIES.join(" "),
 };

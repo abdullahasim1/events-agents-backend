@@ -75,10 +75,16 @@ async function runCityChunk({ city, runId, types, startDate, days } = {}) {
       `🔍 [Chunk] City: ${cleanCity} | Providers: ${active.map((a) => a.name).join(", ") || "none"}`
     );
 
-    // ONE broad query per provider per city (Claude classifies into exact types)
-    const searchTasks = active.map((p) =>
-      p.fn(cleanCity, BROAD_QUERY_KEYWORDS, dateWindow, p.key).catch(() => [])
-    );
+    // High-yield queries per provider per city (broad + specialized sheet keywords)
+    const { BROAD_QUERIES } = require("./agentConfig");
+    const queries = Array.isArray(BROAD_QUERIES) ? BROAD_QUERIES : [BROAD_QUERY_KEYWORDS];
+
+    const searchTasks = [];
+    for (const q of queries) {
+      for (const p of active) {
+        searchTasks.push(p.fn(cleanCity, q, dateWindow, p.key).catch(() => []));
+      }
+    }
     const rawEvents = (await Promise.all(searchTasks)).flat();
 
     let events = [];
