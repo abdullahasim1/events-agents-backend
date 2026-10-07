@@ -25,12 +25,17 @@ async function findEvents(locationsInput, eventTypesInput, { days, startDate } =
   const active = getProviders().filter((p) => isValidKey(p.key));
   console.log(`🔍 [Agent] Providers: ${active.length} (${active.map(a => a.name).join(", ")}) | Locations: ${locations.join(", ")}`);
 
-  // 1. Parallel raw search from all active providers
-  const rawEvents = (
-    await Promise.all(
-      locations.flatMap((loc) => active.map((p) => p.fn(loc, eventTypes, dateWindow, p.key).catch(() => [])))
-    )
-  ).flat();
+  // 1. Parallel raw search: query each targeted category separately so Google & Tavily get precise search terms
+  const searchTasks = [];
+  for (const loc of locations) {
+    for (const type of eventTypes) {
+      for (const p of active) {
+        searchTasks.push(p.fn(loc, type, dateWindow, p.key).catch(() => []));
+      }
+    }
+  }
+
+  const rawEvents = (await Promise.all(searchTasks)).flat();
 
   if (!rawEvents.length) return [];
 

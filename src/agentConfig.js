@@ -9,6 +9,7 @@
 const DEFAULT_LOCATIONS = [
   "Minneapolis, MN",
   "St. Paul, MN",
+  "St. Cloud, MN",
   "Minnesota",
 ];
 

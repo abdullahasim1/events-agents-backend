@@ -1,13 +1,17 @@
 const { isValidKey, CLAUDE_TIMEOUT_MS } = require("./utils");
 
-// 1. Enhanced AI Prompt Template: Enforces clean sources, dynamic real time, and contact info fallback
+// 1. Enhanced AI Prompt Template: Enforces clean sources, dynamic real time, and STRICT DATE WINDOW
 const PROMPT = (locs, types, text, { startDate, endDate }) => `
 Target: Upcoming events matching categories [${types}] in [${locs}] between ${startDate} and ${endDate}.
 Data:
 ${text}
 
+CRITICAL DATE RULE:
+- Every event MUST fall strictly between ${startDate} and ${endDate} (inclusive).
+- If an event is scheduled after ${endDate} (e.g. October 15, October 26, October 29) or before ${startDate}, YOU MUST REJECT AND DISCARD IT. DO NOT INCLUDE IT.
+
 Instructions:
-1. Filter: Keep verified upcoming events that occur or overlap between ${startDate} and ${endDate} (including multi-day conferences that are active during this period). Discard clearly past events.
+1. Filter: Keep ONLY verified upcoming events whose dates fall STRICTLY within ${startDate} to ${endDate}.
 2. Category: Classify each event's "category" into the most matching category from [${types}].
 3. STRICT DEDUPLICATION & MERGING:
    - Each real-world event must appear EXACTLY ONCE. NEVER output duplicate or near-duplicate events.
@@ -75,9 +79,23 @@ async function extractEventsWithClaude(locations, eventTypes, rawEvents, dateWin
   const end = text.lastIndexOf("]");
   if (start === -1 || end === -1) return [];
 
-  // Har event ko guaranteed unique timestamp ID assign karein (never collides)
   const parsed = JSON.parse(text.slice(start, end + 1));
-  return (Array.isArray(parsed) ? parsed : []).map((e, idx) => {
+  const rawList = Array.isArray(parsed) ? parsed : [];
+
+  // 🛡️ STRICT CODE-LEVEL DATE FILTER:
+  // Discard any event that does not fall strictly between startDate and endDate
+  const validList = rawList.filter((e) => {
+    if (!e.date) return false;
+    // Normalize date to YYYY-MM-DD
+    const match = String(e.date).match(/\d{4}-\d{2}-\d{2}/);
+    const dateStr = match ? match[0] : "";
+    if (dateStr && dateWindow.startDate && dateWindow.endDate) {
+      return dateStr >= dateWindow.startDate && dateStr <= dateWindow.endDate;
+    }
+    return true;
+  });
+
+  return validList.map((e, idx) => {
     let contact = (e.contactInfo || "").trim();
     if (!contact || /not available|n\/a|^-$/i.test(contact)) {
       contact = e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "");
