@@ -34,6 +34,41 @@ function getDateWindow(days = DEFAULT_DAYS, customStartDate) {
   };
 }
 
+/**
+ * 📍 PROXIMITY RANKING (Nearest First):
+ * Calculates location distance tier relative to Twin Cities Hub:
+ * - Tier 1: Core Metro Hub (Minneapolis, St. Paul, Bloomington, Edina, Roseville)
+ * - Tier 2: Outer Metro Suburbs (Maple Grove, Minnetonka, Plymouth)
+ * - Tier 3: Regional Minnesota (St. Cloud, Hinckley, Rochester, Duluth)
+ * - Tier 4: Rest of USA
+ */
+function getProximityRank(cityOrLocation = "") {
+  const loc = String(cityOrLocation || "").toLowerCase();
+
+  // Tier 1: Core Metro (0 - 10 miles)
+  if (/minneapolis|st\.?\s*paul|saint paul|downtown|edina|bloomington|roseville/i.test(loc)) {
+    return 1;
+  }
+
+  // Tier 2: Outer Metro Suburbs (10 - 25 miles)
+  if (/maple grove|minnetonka|plymouth|wayzata|eden prairie|eagan/i.test(loc)) {
+    return 2;
+  }
+
+  // Tier 3: Regional Minnesota (25 - 80 miles)
+  if (/st\.?\s*cloud|saint cloud|hinckley|mankato|duluth|rochester|bemidji/i.test(loc)) {
+    return 3;
+  }
+
+  // Tier 4: Minnesota General
+  if (/minnesota|\bmn\b/i.test(loc)) {
+    return 4;
+  }
+
+  // Tier 5: Rest of USA (Far)
+  return 5;
+}
+
 module.exports = {
   FETCH_TIMEOUT_MS,
   CLAUDE_TIMEOUT_MS,
@@ -41,4 +76,5 @@ module.exports = {
   isValidKey,
   buildSearchQuery,
   getDateWindow,
+  getProximityRank,
 };

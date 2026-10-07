@@ -1,4 +1,4 @@
-const { isValidKey, CLAUDE_TIMEOUT_MS } = require("./utils");
+const { isValidKey, CLAUDE_TIMEOUT_MS, getProximityRank } = require("./utils");
 
 // 1. Enhanced AI Prompt Template: Enforces clean sources, dynamic real time, and STRICT DATE WINDOW
 const PROMPT = (locs, types, text, { startDate, endDate }) => `
@@ -126,7 +126,7 @@ async function extractEventsWithClaude(
     return true;
   });
 
-  return validList.map((e, idx) => {
+  const mappedEvents = validList.map((e, idx) => {
     let contact = (e.contactInfo || "").trim();
     if (!contact || /not available|n\/a|^-$/i.test(contact)) {
       contact =
@@ -145,8 +145,18 @@ async function extractEventsWithClaude(
       id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
       contactInfo: contact,
       time,
+      proximityTier: getProximityRank(e.city || e.location),
     };
   });
+
+  // 📍 SORT NEAREST FIRST (Core Metro Hub -> Suburbs -> Regional -> Rest of USA), then by Date
+  mappedEvents.sort((a, b) => {
+    const tierDiff = (a.proximityTier || 99) - (b.proximityTier || 99);
+    if (tierDiff !== 0) return tierDiff;
+    return String(a.date || "").localeCompare(String(b.date || ""));
+  });
+
+  return mappedEvents;
 }
 
 module.exports = { extractEventsWithClaude };
