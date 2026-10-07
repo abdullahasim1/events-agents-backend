@@ -94,8 +94,9 @@ async function upsertEvents(events = []) {
       const id = e.id || `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const title = e.title || e.name || "Untitled Event";
       const org = e.organization || e.organizer || "";
-      const cat = e.category || e.type || "General";
-      const oppType = e.opportunityType || e.opportunity_type || "";
+      const rawCat = (e.category || e.type || e.opportunityType || e.opportunity_type || "Conference / Summit").trim();
+      const cat = !rawCat || rawCat === "undefined" ? (e.opportunityType || "Conference / Summit") : rawCat;
+      const oppType = e.opportunityType || e.opportunity_type || cat;
       const audType = e.audienceType || e.audience_type || "";
       const date = e.date || "";
       const time = e.time || "";
