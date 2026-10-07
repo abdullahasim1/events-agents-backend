@@ -35,8 +35,14 @@ const DEFAULT_EVENT_TYPES = [
 
 const DEFAULT_DAYS = 7; // Exactly next 7 days
 
+// Broad domain keywords for per-city chunked search.
+// One broad query per provider per city maximizes recall; Claude then
+// classifies every event into an exact DEFAULT_EVENT_TYPES entry.
+const BROAD_QUERY_KEYWORDS = "health conferences summits workshops expos";
+
 module.exports = {
   DEFAULT_LOCATIONS,
   DEFAULT_EVENT_TYPES,
   DEFAULT_DAYS,
+  BROAD_QUERY_KEYWORDS,
 };

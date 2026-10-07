@@ -48,4 +48,4 @@ async function findEvents(locationsInput, eventTypesInput, { days, startDate } =
   return await enrichContacts(events);
 }
 
-module.exports = { findEvents };
+module.exports = { findEvents, getProviders };

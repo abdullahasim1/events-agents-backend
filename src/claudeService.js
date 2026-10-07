@@ -12,7 +12,7 @@ CRITICAL DATE RULE:
 
 Instructions:
 1. Filter: Keep ONLY verified upcoming events whose dates fall STRICTLY within ${startDate} to ${endDate}.
-2. Category: Classify each event's "category" into the most matching category from [${types}].
+2. Category (STRICT): Set each event's "category" to EXACTLY ONE of the listed types, copied VERBATIM — [${types}]. Do not invent, merge, or reword type names. If an event does not clearly match ANY listed type, REJECT AND DISCARD IT.
 3. STRICT DEDUPLICATION & MERGING:
    - Each real-world event must appear EXACTLY ONCE. NEVER output duplicate or near-duplicate events.
    - If one source has a shortened title and another has full title, MERGE them into ONE entry using the official title.
