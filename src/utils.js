@@ -1,5 +1,5 @@
-const FETCH_TIMEOUT_MS = 12000;
-const CLAUDE_TIMEOUT_MS = 25000;
+const FETCH_TIMEOUT_MS = 16000;
+const CLAUDE_TIMEOUT_MS = 35000;
 const DEFAULT_DAYS = 7;
 
 // API key verification helper

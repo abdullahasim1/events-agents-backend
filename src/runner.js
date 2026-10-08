@@ -82,7 +82,15 @@ async function runCityChunk({ city, runId, types, startDate, days } = {}) {
     const searchTasks = [];
     for (const q of queries) {
       for (const p of active) {
-        searchTasks.push(p.fn(cleanCity, q, dateWindow, p.key).catch(() => []));
+        // Execute provider search with 1 automatic retry on empty/fail
+        searchTasks.push(
+          p.fn(cleanCity, q, dateWindow, p.key)
+            .catch(async () => {
+              // Quick 800ms backoff and retry once
+              await new Promise((r) => setTimeout(r, 800));
+              return p.fn(cleanCity, q, dateWindow, p.key).catch(() => []);
+            })
+        );
       }
     }
     const rawEvents = (await Promise.all(searchTasks)).flat();

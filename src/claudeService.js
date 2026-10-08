@@ -57,7 +57,7 @@ async function extractEventsWithClaude(
       const k = (e.title || "").trim().toLowerCase();
       return k && !seenRaw.has(k) && seenRaw.add(k);
     })
-    .slice(0, 140);
+    .slice(0, 220); // Expanded budget so all events are covered in first pass
 
   const rawText = dedupedRaw
     .map(
