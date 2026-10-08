@@ -80,9 +80,30 @@ function getTitleFingerprint(title = "") {
     .toLowerCase()
     .replace(/^(join us at|register (now )?for|welcome to|announcing)\s+/i, "")
     .replace(/\b(202[4-9]|203[0-9])\b/g, "") // remove years like 2025, 2026, 2027
-    .replace(/\b(national|state|statewide|annual|biannual|biennial|the|1st|2nd|3rd|4th|5th|fall|spring|summer|winter)\b/g, "")
+    .replace(/\b(national|state|statewide|annual|biannual|biennial|the|1st|2nd|3rd|4th|5th|fall|spring|summer|winter|mn|minnesota)\b/g, "")
     .replace(/[^a-z0-9]/g, "") // remove punctuation & whitespace
     .trim();
+}
+
+/**
+ * 📅 CANONICAL DATE NORMALIZER:
+ * Converts diverse date formats (YYYY-MM-DD, Oct 10, 2026, ISO) into canonical YYYY-MM-DD
+ */
+function normalizeDateKey(dateStr = "") {
+  if (!dateStr) return "";
+  const match = String(dateStr).match(/\d{4}-\d{2}-\d{2}/);
+  if (match) return match[0];
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return String(dateStr).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getEventKey(event = {}) {
+  const fp = getTitleFingerprint(event.title || event.name);
+  const date = normalizeDateKey(event.date);
+  return `${fp}|${date}`;
 }
 
 /**
@@ -141,18 +162,18 @@ function deduplicateEventList(events = []) {
 
   for (const event of events) {
     const fp = getTitleFingerprint(event.title);
-    const date = String(event.date || "").trim();
+    const normDate = normalizeDateKey(event.date);
     const url = String(event.ticketUrl || "").toLowerCase().split("?")[0].replace(/\/$/, "");
     const venue = String(event.venue || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
     const existingIndex = result.findIndex((existing) => {
       const existingFp = getTitleFingerprint(existing.title);
-      const existingDate = String(existing.date || "").trim();
+      const existingNormDate = normalizeDateKey(existing.date);
       const existingUrl = String(existing.ticketUrl || "").toLowerCase().split("?")[0].replace(/\/$/, "");
       const existingVenue = String(existing.venue || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
       // Must be same date to merge
-      if (date && existingDate && date !== existingDate) return false;
+      if (normDate && existingNormDate && normDate !== existingNormDate) return false;
 
       // 1. Exact title fingerprint match
       if (fp && existingFp && fp === existingFp) return true;
@@ -179,6 +200,7 @@ function deduplicateEventList(events = []) {
       const existing = result[existingIndex];
       result[existingIndex] = {
         ...existing,
+        date: normDate || existing.date,
         title: (event.title || "").length > (existing.title || "").length && !(event.title || "").toLowerCase().startsWith("join us") ? event.title : existing.title,
         venue: (existing.venue && !/venue tba|venue$/i.test(existing.venue)) ? existing.venue : (event.venue || existing.venue),
         city: (existing.city && existing.city !== "Minnesota") ? existing.city : (event.city || existing.city),
@@ -188,7 +210,10 @@ function deduplicateEventList(events = []) {
         contactInfo: existing.contactInfo || event.contactInfo || "",
       };
     } else {
-      result.push(event);
+      result.push({
+        ...event,
+        date: normDate || event.date,
+      });
     }
   }
 
@@ -204,6 +229,8 @@ module.exports = {
   getDateWindow,
   getProximityRank,
   getTitleFingerprint,
+  normalizeDateKey,
+  getEventKey,
   isJunkEvent,
   isMinnesotaOrVirtual,
   isProfessionalEvent,

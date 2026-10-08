@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { runCityChunk, findEvents } = require("./runner");
+const { runCityChunk, runCityChunkStream, findEvents } = require("./runner");
 const { initDb, upsertEvents, getAllEvents, clearAllEvents } = require("./db");
 const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
 
@@ -38,7 +38,20 @@ const handleEvents = async (req, res) => {
     // If pure GET with no params and not an explicit run trigger, return saved events from DB
     if (!locations.length && !eventTypes.length && req.method === "GET" && !p.run) {
       const saved = await getAllEvents();
-      return res.status(200).json({ success: true, count: saved.length, events: saved, fromDb: true });
+      let lastUpdated = null;
+      for (const e of saved) {
+        const t = e.updatedAt || e.createdAt;
+        if (t && (!lastUpdated || new Date(t) > new Date(lastUpdated))) {
+          lastUpdated = t;
+        }
+      }
+      return res.status(200).json({
+        success: true,
+        count: saved.length,
+        events: saved,
+        fromDb: true,
+        lastFetchedAt: lastUpdated || new Date().toISOString(),
+      });
     }
 
     // Default to Hardcoded Centralized Config if triggered with 1-click (e.g. POST /events or ?run=true)
@@ -131,6 +144,51 @@ router.post("/events/run", async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "City chunk run failed.", error: err.message });
+  }
+});
+
+/**
+ * ⚡ REAL-TIME SSE STREAMING ROUTE:
+ * Streams events progressively as Claude AI outputs each conference.
+ */
+router.all("/events/stream", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (res.flushHeaders) res.flushHeaders();
+
+  const sendEvent = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const p = { ...req.query, ...req.body };
+  const city = String(p.city || "").trim();
+  const startDate = p.startDate || p.date || null;
+  const days = parseInt(p.days, 10) || DEFAULT_DAYS;
+
+  if (!city) {
+    sendEvent("error", { message: "city parameter is required" });
+    return res.end();
+  }
+
+  try {
+    await runCityChunkStream({
+      city,
+      runId: p.runId || undefined,
+      types: p.types || p.eventTypes || undefined,
+      startDate,
+      days,
+      onEvent: (ev) => sendEvent("event", ev),
+      onStatus: (st) => sendEvent("status", st),
+    });
+
+    sendEvent("done", { success: true, city });
+  } catch (err) {
+    console.error(`❌ [SSE Error for ${city}]:`, err.message);
+    sendEvent("error", { message: err.message, city });
+  } finally {
+    res.end();
   }
 });
 

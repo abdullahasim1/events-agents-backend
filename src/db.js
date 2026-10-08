@@ -12,7 +12,52 @@ pool.on("error", (err) => {
   console.error("❌ [PostgreSQL Pool Error]:", err.message);
 });
 
-const { getTitleFingerprint } = require("./utils");
+const {
+  getTitleFingerprint,
+  normalizeDateKey,
+  getProximityRank,
+  deduplicateEventList,
+} = require("./utils");
+
+async function cleanupDbDuplicates() {
+  if (!pool || !process.env.DATABASE_URL) return;
+  try {
+    const res = await pool.query(
+      "SELECT id, title, date, created_at FROM events ORDER BY created_at ASC"
+    );
+    if (!res.rows.length) return;
+    const seen = new Map();
+    const idsToDelete = [];
+    const updates = [];
+
+    for (const r of res.rows) {
+      const fp = getTitleFingerprint(r.title);
+      const normDate = normalizeDateKey(r.date);
+      const key = `${fp}|${normDate}`;
+      if (seen.has(key)) {
+        idsToDelete.push(r.id);
+      } else {
+        seen.set(key, r.id);
+        updates.push({ id: r.id, fp, date: normDate });
+      }
+    }
+
+    if (idsToDelete.length) {
+      console.log(`🧹 [DB Cleanup] Removing ${idsToDelete.length} duplicate rows from PostgreSQL...`);
+      await pool.query("DELETE FROM events WHERE id = ANY($1::varchar[])", [idsToDelete]);
+    }
+
+    for (const u of updates) {
+      await pool.query(
+        "UPDATE events SET title_fingerprint = $1, date = $2 WHERE id = $3",
+        [u.fp, u.date, u.id]
+      );
+    }
+    console.log(`✅ [DB Cleanup] Database deduplicated & synchronized (${seen.size} unique events).`);
+  } catch (err) {
+    console.warn("⚠️ [DB Cleanup Notice]:", err.message);
+  }
+}
 
 async function initDb() {
   if (!process.env.DATABASE_URL) return;
@@ -45,6 +90,7 @@ async function initDb() {
   `;
   try {
     await pool.query(query);
+    await cleanupDbDuplicates();
   } catch (err) {
     console.error("❌ [DB Init Error]:", err.message);
   }
@@ -88,15 +134,28 @@ async function upsertEvents(events = []) {
     `;
 
     for (const e of events) {
-      const id = e.id || `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id =
+        e.id || `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const title = e.title || e.name || "Untitled Event";
-      const titleFp = getTitleFingerprint(title);
+      const titleFp =
+        getTitleFingerprint(title) ||
+        title.toLowerCase().replace(/[^a-z0-9]/g, "") ||
+        "event";
       const org = e.organization || e.organizer || "";
-      const rawCat = (e.category || e.type || e.opportunityType || e.opportunity_type || "Conference / Summit").trim();
-      const cat = !rawCat || rawCat === "undefined" ? (e.opportunityType || "Conference / Summit") : rawCat;
+      const rawCat = (
+        e.category ||
+        e.type ||
+        e.opportunityType ||
+        e.opportunity_type ||
+        "Conference / Summit"
+      ).trim();
+      const cat =
+        !rawCat || rawCat === "undefined"
+          ? e.opportunityType || "Conference / Summit"
+          : rawCat;
       const oppType = e.opportunityType || e.opportunity_type || cat;
       const audType = e.audienceType || e.audience_type || "";
-      const date = e.date || "";
+      const date = normalizeDateKey(e.date) || e.date || "";
       const time = e.time || "";
       const venue = e.venue || (e.city ? `${e.city} Venue` : "Venue TBA");
       const city = e.city || e.location || "";
@@ -109,9 +168,24 @@ async function upsertEvents(events = []) {
       const source = e.source || "Agent Scraper";
 
       await client.query(insertQuery, [
-        id, title, titleFp, org, cat, oppType, audType,
-        date, time, venue, city, regDl, propDl,
-        contact, status, desc, ticketUrl, source
+        id,
+        title,
+        titleFp,
+        org,
+        cat,
+        oppType,
+        audType,
+        date,
+        time,
+        venue,
+        city,
+        regDl,
+        propDl,
+        contact,
+        status,
+        desc,
+        ticketUrl,
+        source,
       ]);
     }
     await client.query("COMMIT");
@@ -132,7 +206,7 @@ async function upsertEvents(events = []) {
 }
 
 async function getAllEvents() {
-  if (!process.env.DATABASE_URL) return [];
+  if (!pool || !process.env.DATABASE_URL) return [];
   const res = await pool.query(`
     SELECT
       id,
@@ -144,6 +218,7 @@ async function getAllEvents() {
       date,
       time,
       venue,
+      city,
       city AS location,
       registration_deadline AS "registrationDeadline",
       proposal_deadline AS "proposalDeadline",
@@ -157,11 +232,22 @@ async function getAllEvents() {
     FROM events
     ORDER BY created_at DESC;
   `);
-  return res.rows;
+
+  const mapped = res.rows.map((r) => {
+    const city = r.city || r.location || "Minnesota";
+    return {
+      ...r,
+      city,
+      location: city,
+      proximityTier: getProximityRank(city),
+    };
+  });
+
+  return deduplicateEventList(mapped);
 }
 
 async function clearAllEvents() {
-  if (!process.env.DATABASE_URL) return;
+  if (!pool || !process.env.DATABASE_URL) return;
   await pool.query("TRUNCATE TABLE events;");
 }
 

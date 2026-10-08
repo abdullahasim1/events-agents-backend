@@ -5,6 +5,8 @@ const {
   isMinnesotaOrVirtual,
   isProfessionalEvent,
   deduplicateEventList,
+  getTitleFingerprint,
+  normalizeDateKey,
 } = require("./utils");
 
 // 1. Ultra-Strict Professional AI Prompt Template
@@ -178,49 +180,239 @@ async function extractEventsWithClaude(
     return true;
   });
 
-  const mappedEvents = validList.map((e, idx) => {
-    let contact = (e.contactInfo || "").trim();
-    if (!contact || /not available|n\/a|^-$/i.test(contact)) {
-      const textSnippet = `${e.description || ""} ${e.snippet || ""}`;
-      const email = textSnippet.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.[0];
-      const phone = textSnippet.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g)?.[0];
-      contact = [email, phone].filter(Boolean).join(" | ") || (
-        e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "")
-      );
-    }
-
-    let time = (e.time || "").trim();
-    if (/^(tba|tbh|-)$/i.test(time)) {
-      time = "";
-    }
-
-    const rawCategory = (e.category || e.opportunityType || e.type || "Conference / Summit").trim();
-    const finalCategory = !rawCategory || rawCategory === "undefined" ? "Conference / Summit" : rawCategory;
-
-    const city = e.city || e.location || "Minnesota";
-    return {
-      ...e,
-      id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
-      category: finalCategory,
-      city,
-      location: city,
-      contactInfo: contact,
-      time,
-      proximityTier: getProximityRank(city),
-    };
-  });
-
-  // 🛡️ IN-MEMORY FUZZY DEDUPLICATION (Merges near-duplicate variants into one entry)
+  const mappedEvents = validList.map((e, idx) => formatSingleEvent(e, idx));
   const dedupedEvents = deduplicateEventList(mappedEvents);
-
-  // 📍 SORT NEAREST FIRST (Core Metro Hub -> Suburbs -> Regional -> Minnesota General), then by Date
   dedupedEvents.sort((a, b) => {
     const tierDiff = (a.proximityTier || 99) - (b.proximityTier || 99);
     if (tierDiff !== 0) return tierDiff;
     return String(a.date || "").localeCompare(String(b.date || ""));
   });
-
   return dedupedEvents;
 }
 
-module.exports = { extractEventsWithClaude };
+function formatSingleEvent(e, idx = 0) {
+  let contact = (e.contactInfo || "").trim();
+  if (!contact || /not available|n\/a|^-$/i.test(contact)) {
+    const textSnippet = `${e.description || ""} ${e.snippet || ""}`;
+    const email = textSnippet.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.[0];
+    const phone = textSnippet.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g)?.[0];
+    contact = [email, phone].filter(Boolean).join(" | ") || (
+      e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "")
+    );
+  }
+
+  let time = (e.time || "").trim();
+  if (/^(tba|tbh|-)$/i.test(time)) {
+    time = "";
+  }
+
+  const rawCategory = (e.category || e.opportunityType || e.type || "Conference / Summit").trim();
+  const finalCategory = !rawCategory || rawCategory === "undefined" ? "Conference / Summit" : rawCategory;
+
+  const city = e.city || e.location || "Minnesota";
+  const normDate = normalizeDateKey(e.date) || e.date || "";
+  return {
+    ...e,
+    id: e.id || `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
+    date: normDate,
+    category: finalCategory,
+    city,
+    location: city,
+    contactInfo: contact,
+    time,
+    proximityTier: getProximityRank(city),
+  };
+}
+
+function validateSingleEvent(e, dateWindow) {
+  if (!e || !e.title || !e.date) return false;
+  const match = String(e.date).match(/\d{4}-\d{2}-\d{2}/);
+  const dateStr = match ? match[0] : "";
+  if (dateStr && dateWindow?.startDate && dateWindow?.endDate) {
+    if (dateStr < dateWindow.startDate || dateStr > dateWindow.endDate) return false;
+  }
+  if (isJunkEvent(e.title || "", `${e.description || ""} ${e.venue || ""}`)) return false;
+  if (!isMinnesotaOrVirtual(e.city || "", e.venue || "")) return false;
+  if (!isProfessionalEvent(e.title || "", e.category || "", e.description || "")) return false;
+  return true;
+}
+
+/**
+ * ⚡ STREAMING CLAUDE EXTRACTION:
+ * Calls Claude with stream: true. Emits events via onEvent as soon as each JSON object completes.
+ */
+async function streamEventsWithClaude(
+  locations,
+  eventTypes,
+  rawEvents,
+  dateWindow,
+  { onEvent, onStatus } = {},
+) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!isValidKey(apiKey))
+    throw new Error("ANTHROPIC_API_KEY is missing or invalid.");
+
+  const locStr = [locations].flat().join(", ") || "Minnesota";
+  const typeStr = [eventTypes].flat().join(", ") || "Conferences";
+
+  // Pre-filter raw candidates to top 60 clean candidates for 3x speed boost
+  const seenRaw = new Set();
+  const dedupedRaw = rawEvents
+    .filter((e) => {
+      const k = (e.title || "").trim().toLowerCase();
+      if (!k || seenRaw.has(k)) return false;
+      seenRaw.add(k);
+      if (isJunkEvent(e.title || "", e.snippet || e.description || "")) return false;
+      return true;
+    })
+    .slice(0, 60);
+
+  if (!dedupedRaw.length) return [];
+
+  const rawText = dedupedRaw
+    .map(
+      (e, i) =>
+        `Item #${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Time: ${e.time || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || e.snippet || ""}`,
+    )
+    .join("\n");
+
+  if (onStatus) {
+    onStatus({ message: `Claude AI analyzing ${dedupedRaw.length} candidates in real-time...` });
+  }
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
+      max_tokens: 8192,
+      stream: true,
+      messages: [
+        { role: "user", content: PROMPT(locStr, typeStr, rawText, dateWindow) },
+      ],
+    }),
+    signal: AbortSignal.timeout(50000),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Claude (${res.status}): ${errText}`);
+  }
+
+  const collectedEvents = [];
+  let jsonBuffer = "";
+
+  const extractJsonObjects = () => {
+    let depth = 0;
+    let inString = false;
+    let isEscaped = false;
+    let startIndex = -1;
+    let lastEnd = 0;
+
+    for (let i = 0; i < jsonBuffer.length; i++) {
+      const char = jsonBuffer[i];
+
+      if (inString) {
+        if (isEscaped) {
+          isEscaped = false;
+        } else if (char === "\\") {
+          isEscaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (char === "{") {
+        if (depth === 0) startIndex = i;
+        depth++;
+      } else if (char === "}") {
+        depth--;
+        if (depth === 0 && startIndex !== -1) {
+          const jsonSub = jsonBuffer.slice(startIndex, i + 1);
+          try {
+            const parsed = JSON.parse(jsonSub);
+            if (parsed && typeof parsed === "object") {
+              if (validateSingleEvent(parsed, dateWindow)) {
+                const formatted = formatSingleEvent(parsed, collectedEvents.length);
+                const fp = getTitleFingerprint(formatted.title);
+                const normDate = normalizeDateKey(formatted.date);
+
+                // Deduplicate within the same Claude stream
+                const alreadySeen = collectedEvents.some((c) => {
+                  const cFp = getTitleFingerprint(c.title);
+                  const cDate = normalizeDateKey(c.date);
+                  if (normDate && cDate && normDate !== cDate) return false;
+                  if (fp && cFp && fp === cFp) return true;
+                  if (fp && cFp && (fp.includes(cFp) || cFp.includes(fp))) {
+                    const minLen = Math.min(fp.length, cFp.length);
+                    const maxLen = Math.max(fp.length, cFp.length);
+                    if (minLen / maxLen >= 0.6) return true;
+                  }
+                  return false;
+                });
+
+                if (!alreadySeen) {
+                  collectedEvents.push(formatted);
+                  if (onEvent) onEvent(formatted);
+                }
+              }
+            }
+            lastEnd = i + 1;
+          } catch (_) {}
+          startIndex = -1;
+        }
+      }
+    }
+
+    if (lastEnd > 0) {
+      jsonBuffer = jsonBuffer.slice(lastEnd);
+    }
+  };
+
+  const decoder = new TextDecoder();
+  let sseChunkBuffer = "";
+
+  for await (const chunk of res.body) {
+    sseChunkBuffer += decoder.decode(chunk, { stream: true });
+    const lines = sseChunkBuffer.split("\n");
+    sseChunkBuffer = lines.pop();
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const jsonStr = trimmed.slice(5).trim();
+      if (jsonStr === "[DONE]") continue;
+
+      try {
+        const payload = JSON.parse(jsonStr);
+        if (payload.type === "content_block_delta" && payload.delta?.text) {
+          jsonBuffer += payload.delta.text;
+          extractJsonObjects();
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (jsonBuffer.trim()) {
+    extractJsonObjects();
+  }
+
+  return collectedEvents;
+}
+
+module.exports = {
+  extractEventsWithClaude,
+  streamEventsWithClaude,
+  formatSingleEvent,
+  validateSingleEvent,
+};
