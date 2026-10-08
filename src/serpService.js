@@ -27,7 +27,7 @@ async function fetchSerpApiEvents(
 
   // 2. SerpApi Google engine call karein
   const res = await fetch(
-    `https://serpapi.com/search.json?engine=google&q=${query}&num=50&api_key=${apiKey}`,
+    `https://serpapi.com/search.json?engine=google&q=${query}&num=100&api_key=${apiKey}`,
     {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     },

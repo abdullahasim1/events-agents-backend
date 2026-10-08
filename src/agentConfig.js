@@ -34,12 +34,14 @@ const DEFAULT_EVENT_TYPES = [
 
 const DEFAULT_DAYS = 7; // Exactly next 7 days
 
-// High-yield search queries per city chunk:
-// 1. Core health, education, and disabilities conference search
-// 2. Specialized outreach (OCD, law enforcement wellness, youth mental health, autism, admissions)
+// High-yield search queries per city chunk (run in parallel):
+// 1. Health, mental health, counseling, youth & school conferences
+// 2. OCD, autism, developmental disabilities, law enforcement wellness & college admissions
+// 3. Neuroscience, psychiatry, sleep medicine, brain injury, stroke & healthcare leadership
 const BROAD_QUERIES = [
-  "health education mental counseling disabilities conference summit expo",
-  "OCD autism wellness summit law enforcement college admission conference",
+  "health education mental counseling school youth conference summit expo",
+  "disabilities OCD autism special education college admission wellness summit",
+  "neuroscience psychiatry sleep medicine brain injury stroke healthcare conference",
 ];
 
 module.exports = {
