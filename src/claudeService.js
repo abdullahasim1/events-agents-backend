@@ -140,10 +140,14 @@ async function extractEventsWithClaude(
       time = "";
     }
 
+    const rawCategory = (e.category || e.opportunityType || e.type || "Conference / Summit").trim();
+    const finalCategory = !rawCategory || rawCategory === "undefined" ? "Conference / Summit" : rawCategory;
+
     const city = e.city || e.location || "";
     return {
       ...e,
       id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
+      category: finalCategory,
       city,
       location: city,
       contactInfo: contact,

@@ -36,8 +36,13 @@ async function fetchPredictHQEvents(
   const typeStr = String(eventType || "").toLowerCase();
 
   let topic = "conference";
-  if (typeStr.includes("health") || typeStr.includes("mental")) topic = "health conference";
-  else if (typeStr.includes("education") || typeStr.includes("school")) topic = "education conference";
+  if (/sleep/i.test(typeStr)) topic = "sleep conference";
+  else if (/brain injury|stroke/i.test(typeStr)) topic = "brain injury conference";
+  else if (/autism|ocd|disabilit/i.test(typeStr)) topic = "disabilities conference";
+  else if (/neuroscience|psychiatr/i.test(typeStr)) topic = "neuroscience conference";
+  else if (/mental|counsel/i.test(typeStr)) topic = "mental health conference";
+  else if (/education|school/i.test(typeStr)) topic = "education conference";
+  else if (/health|wellness/i.test(typeStr)) topic = "health conference";
 
   const q = `${city} ${topic}`.trim();
   const dateParams =

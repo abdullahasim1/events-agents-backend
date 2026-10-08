@@ -25,14 +25,13 @@ async function findEvents(locationsInput, eventTypesInput, { days, startDate } =
   const active = getProviders().filter((p) => isValidKey(p.key));
   console.log(`🔍 [Agent] Providers: ${active.length} (${active.map(a => a.name).join(", ")}) | Locations: ${locations.join(", ")}`);
 
-  // 1. Parallel raw search: build high-yield queries per location and provider
+  // 1. Parallel raw search: build high-yield queries per location and provider using 4 sectors
+  const { BROAD_QUERIES } = require("./agentConfig");
   const searchTasks = [];
   for (const loc of locations) {
-    // Group categories into high-impact pairs to balance precision and speed
-    for (let i = 0; i < eventTypes.length; i += 2) {
-      const typePair = eventTypes.slice(i, i + 2).join(" ");
+    for (const q of BROAD_QUERIES) {
       for (const p of active) {
-        searchTasks.push(p.fn(loc, typePair, dateWindow, p.key).catch(() => []));
+        searchTasks.push(p.fn(loc, q, dateWindow, p.key).catch(() => []));
       }
     }
   }

@@ -34,14 +34,16 @@ const DEFAULT_EVENT_TYPES = [
 
 const DEFAULT_DAYS = 7; // Exactly next 7 days
 
-// High-yield search queries per city chunk (run in parallel):
-// 1. Health, mental health, counseling, youth & school conferences
-// 2. OCD, autism, developmental disabilities, law enforcement wellness & college admissions
-// 3. Neuroscience, psychiatry, sleep medicine, brain injury, stroke & healthcare leadership
+// 4 Targeted High-Yield Sector Queries per city chunk (run concurrently):
+// 1. Mental Health, Counseling, Youth & School Conferences
+// 2. Intellectual & Developmental Disabilities, Autism, OCD & Special Ed
+// 3. Sleep Medicine, Neuroscience, Psychiatry, Brain Injury & Stroke
+// 4. Healthcare Leadership, Health & Fitness Expo, Community Wellness
 const BROAD_QUERIES = [
-  "health education mental counseling school youth conference summit expo",
-  "disabilities OCD autism special education college admission wellness summit",
-  "neuroscience psychiatry sleep medicine brain injury stroke healthcare conference",
+  "mental health counseling youth school conference summit",
+  "intellectual developmental disabilities autism OCD special education conference",
+  "sleep medicine neuroscience psychiatry brain injury stroke conference",
+  "healthcare leadership health wellness expo community summit",
 ];
 
 module.exports = {
@@ -49,5 +51,4 @@ module.exports = {
   DEFAULT_EVENT_TYPES,
   DEFAULT_DAYS,
   BROAD_QUERIES,
-  BROAD_QUERY_KEYWORDS: BROAD_QUERIES.join(" "),
 };
