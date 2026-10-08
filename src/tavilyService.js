@@ -23,7 +23,7 @@ async function fetchTavilyEvents(
     body: JSON.stringify({
       query: buildSearchQuery(eventType, location, time),
       max_results: 100,
-      search_depth: "advanced",
+      search_depth: "basic",
     }),
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
