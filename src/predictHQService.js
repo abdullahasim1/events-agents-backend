@@ -22,30 +22,54 @@ function formatIsoTime(isoStr) {
 }
 
 /**
- * 🚀 PREDICTHQ SEARCH (Direct 1 Single Call):
- * Queries PredictHQ Events directly with location & categories (No Places API overhead)
+ * 🚀 PREDICTHQ EVENTS SEARCH:
+ * Queries PredictHQ for live conferences, expos, and summits
  */
-async function fetchPredictHQEvents(location, eventType, { startDate, endDate } = {}, key = process.env.PREDICTHQ_API_KEY) {
-  const q = `${[eventType].flat().join(" ")} in ${location}`.trim();
-  const dateParams = startDate && endDate ? `&active.gte=${startDate}T00:00:00Z&active.lte=${endDate}T23:59:59Z` : "";
+async function fetchPredictHQEvents(
+  location,
+  eventType,
+  { startDate, endDate } = {},
+  key = process.env.PREDICTHQ_API_KEY
+) {
+  if (!key) return [];
+  const city = String(location || "").split(",")[0].trim();
+  const typeStr = String(eventType || "").toLowerCase();
 
-  // 1 single direct API call to PredictHQ Events
-  const data = await get(`https://api.predicthq.com/v1/events/?q=${encodeURIComponent(q)}${dateParams}&limit=50`, key);
+  let topic = "conference";
+  if (typeStr.includes("health") || typeStr.includes("mental")) topic = "health conference";
+  else if (typeStr.includes("education") || typeStr.includes("school")) topic = "education conference";
+
+  const q = `${city} ${topic}`.trim();
+  const dateParams =
+    startDate && endDate ? `&active.gte=${startDate}&active.lte=${endDate}` : "";
+
+  const url = `https://api.predicthq.com/v1/events/?q=${encodeURIComponent(q)}&category=conferences,expos,community${dateParams}&limit=50`;
+  const data = await get(url, key);
 
   return (data.results || []).map((e) => {
     const startTime = formatIsoTime(e.start_local || e.start);
     const endTime = formatIsoTime(e.end_local || e.end);
-    const realTime = startTime && endTime && startTime !== endTime ? `${startTime} - ${endTime}` : (startTime || "");
+    const realTime =
+      startTime && endTime && startTime !== endTime
+        ? `${startTime} - ${endTime}`
+        : startTime || "";
+
+    const hostCity = e.geo?.address?.locality
+      ? `${e.geo.address.locality}, MN`
+      : location;
 
     return {
       title: e.title,
-      category: e.category || "General",
-      date: e.start_local ? e.start_local.slice(0, 10) : "",
+      category: e.category || "Conference / Summit",
+      date: e.start_local ? e.start_local.slice(0, 10) : (e.start ? e.start.slice(0, 10) : ""),
       time: realTime,
-      venue: (e.entities || []).find((x) => x.type === "venue")?.name || e.geo?.address?.formatted_address || "",
-      city: location,
-      snippet: e.description || `Event in ${location}`,
-      url: `https://www.google.com/search?q=${encodeURIComponent(`${e.title} ${location}`)}`,
+      venue:
+        (e.entities || []).find((x) => x.type === "venue")?.name ||
+        e.geo?.address?.formatted_address ||
+        "",
+      city: hostCity,
+      snippet: e.description || `Event in ${hostCity}`,
+      url: `https://www.predicthq.com/events/${e.id}`,
       source: "PredictHQ",
     };
   });

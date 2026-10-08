@@ -1,4 +1,3 @@
-const crypto = require("node:crypto");
 const { getProviders } = require("./agentService");
 const { extractEventsWithClaude } = require("./claudeService");
 const { enrichContacts } = require("./enrichmentService");
@@ -12,44 +11,8 @@ const {
 const {
   DEFAULT_EVENT_TYPES,
   DEFAULT_DAYS,
-  BROAD_QUERY_KEYWORDS,
+  BROAD_QUERIES,
 } = require("./agentConfig");
-
-/**
- * 🧩 COVERAGE MATRIX (pure function):
- * Every city × every event type becomes an explicit cell, so a run can
- * never silently skip a city or an event type. Execution is grouped per
- * city (one broad chunk each); the matrix is the coverage contract.
- */
-function buildRunMatrix(cities, types, startDate, days) {
-  const cityList = [cities].flat().map((s) => String(s).trim()).filter(Boolean);
-  const typeList = [types].flat().map((s) => String(s).trim()).filter(Boolean);
-  const dateWindow = getDateWindow(days, startDate);
-  const runId = `run-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
-
-  const cells = [];
-  for (const city of cityList) {
-    for (const type of typeList) {
-      cells.push({
-        city,
-        type,
-        startDate: dateWindow.startDate,
-        endDate: dateWindow.endDate,
-      });
-    }
-  }
-
-  return {
-    runId,
-    cities: cityList,
-    types: typeList,
-    startDate: dateWindow.startDate,
-    endDate: dateWindow.endDate,
-    days: parseInt(days, 10) || DEFAULT_DAYS,
-    totalCells: cells.length,
-    cells,
-  };
-}
 
 /**
  * 🏙️ CITY CHUNK RUN:
@@ -65,7 +28,7 @@ async function runCityChunk({ city, runId, types, startDate, days } = {}) {
   const finalTypes = typeList.length ? typeList : DEFAULT_EVENT_TYPES;
   const dateWindow = getDateWindow(days, startDate);
   const finalRunId =
-    runId || `run-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+    runId || `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   await markRunCellStarted(finalRunId, cleanCity);
 
@@ -75,12 +38,8 @@ async function runCityChunk({ city, runId, types, startDate, days } = {}) {
       `🔍 [Chunk] City: ${cleanCity} | Providers: ${active.map((a) => a.name).join(", ") || "none"}`
     );
 
-    // High-yield queries per provider per city (broad + specialized sheet keywords)
-    const { BROAD_QUERIES } = require("./agentConfig");
-    const queries = Array.isArray(BROAD_QUERIES) ? BROAD_QUERIES : [BROAD_QUERY_KEYWORDS];
-
     const searchTasks = [];
-    for (const q of queries) {
+    for (const q of BROAD_QUERIES) {
       for (const p of active) {
         // Execute provider search with 1 automatic retry on empty/fail
         searchTasks.push(
@@ -129,4 +88,4 @@ async function runCityChunk({ city, runId, types, startDate, days } = {}) {
   }
 }
 
-module.exports = { buildRunMatrix, runCityChunk };
+module.exports = { runCityChunk };
