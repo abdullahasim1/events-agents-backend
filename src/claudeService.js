@@ -129,10 +129,12 @@ async function extractEventsWithClaude(
   const mappedEvents = validList.map((e, idx) => {
     let contact = (e.contactInfo || "").trim();
     if (!contact || /not available|n\/a|^-$/i.test(contact)) {
-      contact =
-        e.ticketUrl && !e.ticketUrl.includes("google.com/search")
-          ? e.ticketUrl
-          : e.ticketUrl || "";
+      const text = `${e.description || ""} ${e.snippet || ""}`;
+      const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.[0];
+      const phone = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g)?.[0];
+      contact = [email, phone].filter(Boolean).join(" | ") || (
+        e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "")
+      );
     }
 
     let time = (e.time || "").trim();

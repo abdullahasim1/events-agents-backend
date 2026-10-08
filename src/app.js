@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { findEvents } = require("./agentService");
-const { runCityChunk } = require("./runner");
+const { runCityChunk, findEvents } = require("./runner");
 const { initDb, upsertEvents, getAllEvents, clearAllEvents } = require("./db");
 const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
 

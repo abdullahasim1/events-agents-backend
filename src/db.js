@@ -37,15 +37,6 @@ async function initDb() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_events_title_date ON events (LOWER(title), LOWER(COALESCE(date, '')));
-    CREATE TABLE IF NOT EXISTS run_cells (
-      run_id TEXT NOT NULL,
-      city TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'running',
-      events_found INT DEFAULT 0,
-      error TEXT,
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_run_cells_run_city ON run_cells (run_id, city);
   `;
   try {
     await pool.query(query);
@@ -133,55 +124,6 @@ async function upsertEvents(events = []) {
   }
 }
 
-/**
- * 📋 RUN LEDGER: track every city chunk of a run (done / failed).
- * Ledger writes never throw — a tracking failure must not break a run.
- */
-async function markRunCellStarted(runId, city) {
-  if (!process.env.DATABASE_URL || !runId || !city) return;
-  try {
-    await pool.query(
-      `INSERT INTO run_cells (run_id, city, status, updated_at)
-       VALUES ($1, $2, 'running', NOW())
-       ON CONFLICT (run_id, city)
-       DO UPDATE SET status = 'running', error = NULL, updated_at = NOW()`,
-      [runId, city]
-    );
-  } catch (err) {
-    console.error("❌ [Run Ledger Error]:", err.message);
-  }
-}
-
-async function markRunCellDone(runId, city, eventsFound = 0) {
-  if (!process.env.DATABASE_URL || !runId || !city) return;
-  try {
-    await pool.query(
-      `INSERT INTO run_cells (run_id, city, status, events_found, updated_at)
-       VALUES ($1, $2, 'done', $3, NOW())
-       ON CONFLICT (run_id, city)
-       DO UPDATE SET status = 'done', events_found = $3, error = NULL, updated_at = NOW()`,
-      [runId, city, eventsFound]
-    );
-  } catch (err) {
-    console.error("❌ [Run Ledger Error]:", err.message);
-  }
-}
-
-async function markRunCellFailed(runId, city, error = "") {
-  if (!process.env.DATABASE_URL || !runId || !city) return;
-  try {
-    await pool.query(
-      `INSERT INTO run_cells (run_id, city, status, error, updated_at)
-       VALUES ($1, $2, 'failed', $3, NOW())
-       ON CONFLICT (run_id, city)
-       DO UPDATE SET status = 'failed', error = $3, updated_at = NOW()`,
-      [runId, city, String(error).slice(0, 500)]
-    );
-  } catch (err) {
-    console.error("❌ [Run Ledger Error]:", err.message);
-  }
-}
-
 async function getAllEvents() {
   if (!process.env.DATABASE_URL) return [];
   const res = await pool.query(`
@@ -222,7 +164,4 @@ module.exports = {
   upsertEvents,
   getAllEvents,
   clearAllEvents,
-  markRunCellStarted,
-  markRunCellDone,
-  markRunCellFailed,
 };
