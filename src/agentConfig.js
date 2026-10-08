@@ -28,7 +28,7 @@ const DEFAULT_EVENT_TYPES = [
   "Neuroscience / Healthcare Leadership",
   "School-Based Health / Youth Mental Health / Healthcare-Education Summit",
   "Brain injury and stroke education/support conference",
-  "Health & Fitness Expo / Community Wellness Event",
+  "Health & Fitness Expo / Healthcare Summit",
   "Conference / Summit",
 ];
 
@@ -38,12 +38,12 @@ const DEFAULT_DAYS = 7; // Exactly next 7 days
 // 1. Mental Health, Counseling, Youth & School Conferences
 // 2. Intellectual & Developmental Disabilities, Autism, OCD & Special Ed
 // 3. Sleep Medicine, Neuroscience, Psychiatry, Brain Injury & Stroke
-// 4. Healthcare Leadership, Health & Fitness Expo, Community Wellness
+// 4. Healthcare Leadership, Health & Fitness Expo, Healthcare Summit
 const BROAD_QUERIES = [
   "mental health counseling youth school conference summit",
   "intellectual developmental disabilities autism OCD special education conference",
   "sleep medicine neuroscience psychiatry brain injury stroke conference",
-  "healthcare leadership health wellness expo community summit",
+  "healthcare leadership medical wellness conference summit expo",
 ];
 
 module.exports = {

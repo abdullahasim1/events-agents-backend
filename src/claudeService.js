@@ -1,36 +1,66 @@
-const { isValidKey, CLAUDE_TIMEOUT_MS, getProximityRank } = require("./utils");
+const {
+  isValidKey,
+  getProximityRank,
+  isJunkEvent,
+  isMinnesotaOrVirtual,
+  isProfessionalEvent,
+  deduplicateEventList,
+} = require("./utils");
 
-// 1. Enhanced AI Prompt Template: Enforces clean sources, dynamic real time, and STRICT DATE WINDOW
+// 1. Ultra-Strict Professional AI Prompt Template
 const PROMPT = (locs, types, text, { startDate, endDate }) => `
-Target: Upcoming events matching categories [${types}] in [${locs}] between ${startDate} and ${endDate}.
-Data:
+You are an expert conference intelligence agent filtering events for an executive outreach dashboard.
+Target: Strictly upcoming professional conferences, summits, symposiums, expos, and structured professional training workshops matching categories [${types}] in [${locs}] between ${startDate} and ${endDate}.
+
+Raw Data:
 ${text}
 
-CRITICAL DATE RULE:
-- Every event MUST fall strictly between ${startDate} and ${endDate} (inclusive).
-- If an event is scheduled after ${endDate} (e.g. October 15, October 26, October 29) or before ${startDate}, YOU MUST REJECT AND DISCARD IT. DO NOT INCLUDE IT.
+=========================================
+🚨 ZERO-TOLERANCE EXCLUSION RULES (DISCARD IMMEDIATELY):
+=========================================
+1. NO SPORTS / RACES / FITNESS:
+   - Discard all 5K, 10K, marathons, sprints, running races, fun runs, walks, triathlons, tournaments, open gyms, sports camps (e.g. "Spooky Sprint").
+2. NO PHOTOSHOOTS OR PRIVATE CLINICAL SESSIONS:
+   - Discard all photography mini-sessions, photoshoots, portrait sessions, open houses for photography (e.g. "Fall Motherhood Mini Sessions").
+3. NO CRAFTS, ARTS & HOBBY WORKSHOPS:
+   - Discard pottery classes, painting classes, ceramics workshops, sample classes, wine & paint, DIY crafts, knitting (e.g. "Come Sample What We Do!").
+4. NO SOCIAL GATHERINGS, PARTIES, OR CONSUMER POP-UPS:
+   - Discard happy hours, pub crawls, baby showers, market stalls, craft fairs, costume parties, flea markets, festivals.
+5. MUST BE A LEGITIMATE PROFESSIONAL EVENT:
+   - Must be a professional, academic, medical, educational, healthcare, or corporate conference, summit, symposium, convention, forum, expo, or structured professional training/workshop.
 
-Instructions:
-1. Filter: Keep ONLY verified upcoming events whose dates fall STRICTLY within ${startDate} to ${endDate}.
-2. Category (STRICT): Set each event's "category" to EXACTLY ONE of the listed types, copied VERBATIM — [${types}]. Do not invent, merge, or reword type names. If an event does not clearly match ANY listed type, REJECT AND DISCARD IT.
-3. STRICT DEDUPLICATION & MERGING:
-   - Each real-world event must appear EXACTLY ONCE. NEVER output duplicate or near-duplicate events.
-   - If one source has a shortened title and another has full title, MERGE them into ONE entry using the official title.
-   - Always choose the most specific host city (e.g. use "Islamabad" instead of "Pakistan", use "Minneapolis, MN" instead of "Minneapolis").
-4. REAL TICKET URL & CLEAN SOURCE (CRITICAL):
-   - "ticketUrl": MUST be the actual event or ticket URL from the matching "Link" field. Never return "-" if a link is present.
-   - "source": Write the actual website name or platform domain (e.g. "Eventbrite", "Google Events", "PredictHQ", "NACAC.org"). NEVER use numbers, brackets, or citations like "[11]" or "[12]".
-5. CONTACT INFO:
-   - "contactInfo": Extract organizer email or phone number if explicitly found in the text.
-   - FALLBACK: If no explicit email or phone number is found, SET "contactInfo" TO THE EVENT'S TICKET / OFFICIAL PAGE URL ("ticketUrl"). The user will open this link to retrieve contact details directly.
-6. Venue & Location:
-   - "venue": Extract the exact physical venue where the event is happening inside the city (e.g. "Minneapolis Convention Center", "Saint Paul College", "River’s Edge Convention Center", "Graduate by Hilton", or "Online").
-   - "city": The specific host city (e.g. "Minneapolis, MN", "St. Paul, MN", "St. Cloud, MN").
-7. Opportunity: Identify organization, opportunityType, audienceType, deadlines.
-8. REAL DYNAMIC TIME (NO HARDCODING):
-   - Extract the real event start and end time (e.g. "10:00 AM", "01:00 PM - 05:00 PM", "08:30 AM EST", "19:00") directly from the Date, Time, or Info snippets.
-   - DO NOT make up or hardcode fake times. If no time is found in the source, leave "time" as an empty string "".
-9. Return ONLY valid JSON array (no markdown code blocks, no backticks, no preamble):
+=========================================
+🗺️ STRICT MINNESOTA GEO-FENCE (MINNESOTA ONLY):
+=========================================
+- The physical event venue or host city MUST be located in Minnesota (MN).
+- IMMEDIATELY DISCARD any event located in Washington D.C., Chicago, New York, California, Texas, Florida, or ANY city/state outside Minnesota, EVEN IF a Minnesota organization, chapter, or speaker is mentioned.
+- Virtual/online events are permitted ONLY if hosted by a recognized Minnesota or national professional association.
+
+=========================================
+📅 STRICT DATE WINDOW RULE:
+=========================================
+- Every event MUST fall strictly between ${startDate} and ${endDate} (inclusive).
+- Discard any event outside this range.
+
+=========================================
+🔄 DEDUPLICATION & TITLE NORMALIZATION:
+=========================================
+- Merge duplicate variants of the same conference into ONE canonical entry.
+- Clean up promotional noise: strip prefixes like "Join us at...", "Register now for...", "Annual...", or redundant year prefixes like "2026 ...".
+- Use the official, professional title (e.g. "Minnesota OCD Conference 2026", "Self-Direction Connection Conference 2026", "Ellie Mental Health Franchise Conference 2026").
+- Do NOT output multiple entries for the same event on the same date.
+
+=========================================
+🏷️ FIELD REQUIREMENTS:
+=========================================
+- "category": Choose EXACTLY ONE of [${types}], copied VERBATIM. Do not invent or reword categories.
+- "ticketUrl": MUST be the actual event or ticket URL from the matching "Link" field. Never return "-" if a link is present.
+- "source": Website name or platform domain (e.g. "Eventbrite", "PredictHQ", "NACAC.org"). Never use bracketed citations like "[11]".
+- "venue": Exact physical venue inside the city (e.g. "Minneapolis Convention Center", "Saint Paul RiverCentre", or "Online").
+- "city": Host city with state (e.g. "Minneapolis, MN", "St. Paul, MN", "Bloomington, MN", "Online").
+- "time": Real start/end time (e.g. "09:00 AM - 04:00 PM"). If none found, leave empty string "".
+
+Return ONLY a valid JSON array (no markdown code blocks, no backticks, no preamble):
 [{"id":"ev-1","title":"","organization":"","category":"","opportunityType":"","audienceType":"","date":"YYYY-MM-DD","time":"","venue":"","city":"","registrationDeadline":"-","proposalDeadline":"-","contactInfo":"https://...","status":"Confirmed","description":"","ticketUrl":"","source":""}]`;
 
 /**
@@ -47,8 +77,8 @@ async function extractEventsWithClaude(
   if (!isValidKey(apiKey))
     throw new Error("ANTHROPIC_API_KEY is missing or invalid.");
 
-  const locStr = [locations].flat().join(", ") || "Global";
-  const typeStr = [eventTypes].flat().join(", ") || "General";
+  const locStr = [locations].flat().join(", ") || "Minnesota";
+  const typeStr = [eventTypes].flat().join(", ") || "Conferences";
 
   // Pre-filter raw events to remove exact title duplicates before sending to Claude
   const seenRaw = new Set();
@@ -57,7 +87,7 @@ async function extractEventsWithClaude(
       const k = (e.title || "").trim().toLowerCase();
       return k && !seenRaw.has(k) && seenRaw.add(k);
     })
-    .slice(0, 350); // High safety cap: covers 100% of real candidate events without timeout
+    .slice(0, 350);
 
   const rawText = dedupedRaw
     .map(
@@ -67,7 +97,7 @@ async function extractEventsWithClaude(
     .join("\n");
 
   console.log(
-    `   🤖 [Claude AI] Verifying & Extracting ${dedupedRaw.length} unique items for [${locStr}]...`,
+    `   🤖 [Claude AI] Verifying & Extracting ${dedupedRaw.length} candidate items for [${locStr}]...`,
   );
 
   // Anthropic Claude Messages API call
@@ -113,25 +143,47 @@ async function extractEventsWithClaude(
 
   const rawList = Array.isArray(parsed) ? parsed : [];
 
-  // 🛡️ STRICT CODE-LEVEL DATE FILTER:
-  // Discard any event that does not fall strictly between startDate and endDate
+  // 🛡️ MULTI-LAYER CODE SAFETY SHIELD:
+  // 1. Strict Date Window Filter
+  // 2. Junk Blacklist Filter (No races, photoshoots, crafts)
+  // 3. Strict Minnesota Geo-Fence Filter (No D.C., Chicago, etc.)
+  // 4. Professional Event Type Validator
   const validList = rawList.filter((e) => {
+    // 1. Date window verification
     if (!e.date) return false;
-    // Normalize date to YYYY-MM-DD
     const match = String(e.date).match(/\d{4}-\d{2}-\d{2}/);
     const dateStr = match ? match[0] : "";
     if (dateStr && dateWindow.startDate && dateWindow.endDate) {
-      return dateStr >= dateWindow.startDate && dateStr <= dateWindow.endDate;
+      if (dateStr < dateWindow.startDate || dateStr > dateWindow.endDate) return false;
     }
+
+    // 2. Junk rejection (races, sports, photoshoots, crafts, pottery)
+    if (isJunkEvent(e.title || "", `${e.description || ""} ${e.venue || ""}`)) {
+      console.log(`   ⛔ [Shield Dropped Junk]: "${e.title}"`);
+      return false;
+    }
+
+    // 3. Minnesota State & City Geo-fence verification
+    if (!isMinnesotaOrVirtual(e.city || "", e.venue || "")) {
+      console.log(`   ⛔ [Shield Dropped Out-Of-State]: "${e.title}" in (${e.city || e.venue})`);
+      return false;
+    }
+
+    // 4. Professional Event Validator
+    if (!isProfessionalEvent(e.title || "", e.category || "", e.description || "")) {
+      console.log(`   ⛔ [Shield Dropped Non-Conference]: "${e.title}"`);
+      return false;
+    }
+
     return true;
   });
 
   const mappedEvents = validList.map((e, idx) => {
     let contact = (e.contactInfo || "").trim();
     if (!contact || /not available|n\/a|^-$/i.test(contact)) {
-      const text = `${e.description || ""} ${e.snippet || ""}`;
-      const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.[0];
-      const phone = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g)?.[0];
+      const textSnippet = `${e.description || ""} ${e.snippet || ""}`;
+      const email = textSnippet.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.[0];
+      const phone = textSnippet.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g)?.[0];
       contact = [email, phone].filter(Boolean).join(" | ") || (
         e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "")
       );
@@ -145,7 +197,7 @@ async function extractEventsWithClaude(
     const rawCategory = (e.category || e.opportunityType || e.type || "Conference / Summit").trim();
     const finalCategory = !rawCategory || rawCategory === "undefined" ? "Conference / Summit" : rawCategory;
 
-    const city = e.city || e.location || "";
+    const city = e.city || e.location || "Minnesota";
     return {
       ...e,
       id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
@@ -158,14 +210,17 @@ async function extractEventsWithClaude(
     };
   });
 
-  // 📍 SORT NEAREST FIRST (Core Metro Hub -> Suburbs -> Regional -> Rest of USA), then by Date
-  mappedEvents.sort((a, b) => {
+  // 🛡️ IN-MEMORY FUZZY DEDUPLICATION (Merges near-duplicate variants into one entry)
+  const dedupedEvents = deduplicateEventList(mappedEvents);
+
+  // 📍 SORT NEAREST FIRST (Core Metro Hub -> Suburbs -> Regional -> Minnesota General), then by Date
+  dedupedEvents.sort((a, b) => {
     const tierDiff = (a.proximityTier || 99) - (b.proximityTier || 99);
     if (tierDiff !== 0) return tierDiff;
     return String(a.date || "").localeCompare(String(b.date || ""));
   });
 
-  return mappedEvents;
+  return dedupedEvents;
 }
 
 module.exports = { extractEventsWithClaude };
