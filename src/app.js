@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { runCityChunk, runCityChunkStream, findEvents } = require("./runner");
-const { initDb, upsertEvents, getAllEvents, clearAllEvents } = require("./db");
+const { initDb, upsertEvents, getAllEvents, updateEvent, clearAllEvents } = require("./db");
 const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
 
 const app = express();
@@ -90,6 +90,19 @@ const router = express.Router();
 router.get("/health", (_, res) => res.json({ status: "ok", message: "Events Agent API is running!" }));
 router.get("/events", handleEvents);
 router.post("/events", handleEvents);
+router.patch("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await updateEvent(id, req.body);
+    if (!updated) {
+      return res.status(404).json({ success: false, message: "Event not found or no valid fields to update" });
+    }
+    return res.status(200).json({ success: true, event: updated });
+  } catch (err) {
+    console.error("❌ [Event Update Error]:", err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 router.delete("/events", async (_, res) => {
   try {
     await clearAllEvents();

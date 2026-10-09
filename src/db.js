@@ -81,10 +81,12 @@ async function initDb() {
       description TEXT,
       ticket_url TEXT,
       source TEXT,
+      electricity_ordered VARCHAR(50) DEFAULT 'No',
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE events ADD COLUMN IF NOT EXISTS title_fingerprint TEXT;
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS electricity_ordered VARCHAR(50) DEFAULT 'No';
     CREATE UNIQUE INDEX IF NOT EXISTS idx_events_title_date ON events (LOWER(title), LOWER(COALESCE(date, '')));
     CREATE UNIQUE INDEX IF NOT EXISTS idx_events_fingerprint_date ON events (title_fingerprint, LOWER(COALESCE(date, '')));
   `;
@@ -227,6 +229,14 @@ async function getAllEvents() {
       description,
       ticket_url AS "ticketUrl",
       source,
+      COALESCE(outreach_timing, '-') AS "outreachTiming",
+      COALESCE(exhibit_registered, 'No') AS "exhibitRegistered",
+      COALESCE(payment_completed, 'No') AS "paymentCompleted",
+      COALESCE(set_up_time, time, 'TBD') AS "setUpTime",
+      COALESCE(electricity_ordered, 'No') AS "electricityOrdered",
+      COALESCE(electricity_ordered, 'No') AS "electricity_ordered",
+      COALESCE(misc_info, '-') AS "miscInfo",
+      COALESCE(notes, description, '-') AS "notes",
       created_at AS "createdAt",
       updated_at AS "updatedAt"
     FROM events
@@ -246,6 +256,67 @@ async function getAllEvents() {
   return deduplicateEventList(mapped);
 }
 
+async function updateEvent(id, fields = {}) {
+  if (!pool || !process.env.DATABASE_URL || !id) return null;
+  const setClauses = [];
+  const values = [];
+  let idx = 1;
+
+  const allowedCols = {
+    status: fields.status,
+    outreach_timing: fields.outreach_timing ?? fields.outreachTiming,
+    proposal_deadline: fields.proposal_deadline ?? fields.proposalDeadline,
+    registration_deadline: fields.registration_deadline ?? fields.registrationDeadline,
+    exhibit_registered: fields.exhibit_registered ?? fields.exhibitRegistered,
+    payment_completed: fields.payment_completed ?? fields.paymentCompleted,
+    set_up_time: fields.set_up_time ?? fields.setUpTime,
+    electricity_ordered: fields.electricity_ordered ?? fields.electricityOrdered,
+    misc_info: fields.misc_info ?? fields.miscInfo,
+    notes: fields.notes,
+  };
+
+  for (const [col, val] of Object.entries(allowedCols)) {
+    if (val !== undefined && val !== null) {
+      setClauses.push(`${col} = $${idx++}`);
+      const cleanVal = typeof val === "boolean" ? (val ? "Yes" : "No") : String(val).trim();
+      values.push(cleanVal);
+    }
+  }
+
+  if (!setClauses.length) return null;
+  setClauses.push(`updated_at = NOW()`);
+  values.push(id);
+
+  const query = `
+    UPDATE events
+    SET ${setClauses.join(", ")}
+    WHERE id = $${idx}
+    RETURNING
+      id, title, organization, category,
+      opportunity_type AS "opportunityType",
+      audience_type AS "audienceType",
+      date, time, venue, city, city AS location,
+      COALESCE(registration_deadline, '-') AS "registrationDeadline",
+      COALESCE(proposal_deadline, '-') AS "proposalDeadline",
+      contact_info AS "contactInfo",
+      status, description,
+      ticket_url AS "ticketUrl",
+      source,
+      COALESCE(outreach_timing, '-') AS "outreachTiming",
+      COALESCE(exhibit_registered, 'No') AS "exhibitRegistered",
+      COALESCE(payment_completed, 'No') AS "paymentCompleted",
+      COALESCE(set_up_time, time, 'TBD') AS "setUpTime",
+      COALESCE(electricity_ordered, 'No') AS "electricityOrdered",
+      COALESCE(electricity_ordered, 'No') AS "electricity_ordered",
+      COALESCE(misc_info, '-') AS "miscInfo",
+      COALESCE(notes, description, '-') AS "notes",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt";
+  `;
+  const res = await pool.query(query, values);
+  return res.rows[0] || null;
+}
+
 async function clearAllEvents() {
   if (!pool || !process.env.DATABASE_URL) return;
   await pool.query("TRUNCATE TABLE events;");
@@ -256,5 +327,6 @@ module.exports = {
   initDb,
   upsertEvents,
   getAllEvents,
+  updateEvent,
   clearAllEvents,
 };
