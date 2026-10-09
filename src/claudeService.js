@@ -1,284 +1,104 @@
 const {
   isValidKey,
   getProximityRank,
-  isJunkEvent,
-  isMinnesotaOrVirtual,
-  isProfessionalEvent,
-  deduplicateEventList,
   getTitleFingerprint,
   normalizeDateKey,
+  generateEventSlug,
 } = require("./utils");
 
-// 1. Ultra-Strict Professional AI Prompt Template
-const PROMPT = (locs, types, text, { startDate, endDate }) => `
-You are an expert conference intelligence agent filtering events for an executive outreach dashboard.
-Target: Strictly upcoming professional conferences, summits, symposiums, expos, and structured professional training workshops matching categories [${types}] in [${locs}] between ${startDate} and ${endDate}.
-
-Raw Data:
-${text}
+// 1. Crisp, High-Density System Instructions (Anthropic Prompt Caching enabled)
+const SYSTEM_INSTRUCTIONS = `You are an expert conference intelligence agent filtering executive events.
+Target: Strictly upcoming professional conferences, summits, symposiums, expos, and clinical workshops in Medical, Healthcare, Mental Health, Psychiatry, Psychology, Counseling, Neuroscience, and Developmental Disabilities.
 
 =========================================
-🚨 ZERO-TOLERANCE EXCLUSION RULES (DISCARD IMMEDIATELY):
+🚨 ZERO-TOLERANCE EXCLUSIONS (DISCARD IMMEDIATELY):
 =========================================
-1. NO SPORTS / RACES / FITNESS:
-   - Discard all 5K, 10K, marathons, sprints, running races, fun runs, walks, triathlons, tournaments, open gyms, sports camps (e.g. "Spooky Sprint").
-2. NO PHOTOSHOOTS OR PRIVATE CLINICAL SESSIONS:
-   - Discard all photography mini-sessions, photoshoots, portrait sessions, open houses for photography (e.g. "Fall Motherhood Mini Sessions").
-3. NO CRAFTS, ARTS & HOBBY WORKSHOPS:
-   - Discard pottery classes, painting classes, ceramics workshops, sample classes, wine & paint, DIY crafts, knitting (e.g. "Come Sample What We Do!").
-4. NO SOCIAL GATHERINGS, PARTIES, OR CONSUMER POP-UPS:
-   - Discard happy hours, pub crawls, baby showers, market stalls, craft fairs, costume parties, flea markets, festivals.
-5. MUST BE A LEGITIMATE PROFESSIONAL EVENT:
-   - Must be a professional, academic, medical, educational, healthcare, or corporate conference, summit, symposium, convention, forum, expo, or structured professional training/workshop.
+1. NO SPORTS/FITNESS: Discard all 5K, 10K, marathons, races, fun runs, walks, tournaments, open gyms.
+2. NO PHOTOSHOOTS: Discard photography sessions, mini-sessions, open houses.
+3. NO CRAFTS/HOBBIES: Discard pottery, ceramics, wine & paint, DIY crafts, cooking classes.
+4. NO SOCIAL PARTIES: Discard happy hours, pub crawls, flea markets, craft fairs, costume parties.
+5. NO YOUTH/K-12: Discard school science fairs, student recitals, day camps, general parent meetings.
+6. NO GENERAL BUSINESS/SALES: Discard chamber of commerce, business breakfasts, buying roadshows, retail, corporate forums.
+7. NO GENERAL TECH/IT: Discard general software, tech summits, telecom unless explicitly medical/health IT.
+8. NO RELIGIOUS/POLITICAL: Discard pastor summits, church conferences, ministry meetings, international diplomacy.
+9. NO ENVIRONMENTAL/NATURAL: Discard water resources, agriculture, forestry, climate conventions.
+10. MUST BE HEALTHCARE / MEDICAL: Must be clinical medicine, nursing, mental health, psychiatry, psychology, counseling, neurology, or disabilities.
 
 =========================================
-🗺️ STRICT MINNESOTA GEO-FENCE (MINNESOTA ONLY):
+🗺️ STRICT MINNESOTA GEO-FENCE:
 =========================================
-- The physical event venue or host city MUST be located in Minnesota (MN).
-- IMMEDIATELY DISCARD any event located in Washington D.C., Chicago, New York, California, Texas, Florida, or ANY city/state outside Minnesota, EVEN IF a Minnesota organization, chapter, or speaker is mentioned.
+- Physical venue MUST be located in Minnesota (Minneapolis, St. Paul, Bloomington, Rochester, Duluth, etc.).
+- Immediately discard any out-of-state events (Chicago, DC, NY, CA, TX, FL, etc.).
 - Virtual/online events are permitted ONLY if hosted by a recognized Minnesota or national professional association.
 
 =========================================
-📅 STRICT DATE WINDOW RULE:
+🔄 DEDUPLICATION & SCHEMA:
 =========================================
-- Every event MUST fall strictly between ${startDate} and ${endDate} (inclusive).
-- Discard any event outside this range.
+- Merge duplicate variants into ONE canonical official conference title.
+- Return ONLY a valid JSON array of objects with schema:
+  [{"id":"ev-1","title":"","organization":"","category":"","opportunityType":"","audienceType":"","date":"YYYY-MM-DD","time":"","venue":"","city":"","registrationDeadline":"-","proposalDeadline":"-","contactInfo":"","status":"Confirmed","description":"","ticketUrl":"","source":""}]
+- Output ONLY the raw JSON array (no markdown code blocks, no backticks, no conversational preamble).`;
 
-=========================================
-🔄 DEDUPLICATION & TITLE NORMALIZATION:
-=========================================
-- Merge duplicate variants of the same conference into ONE canonical entry.
-- Clean up promotional noise: strip prefixes like "Join us at...", "Register now for...", "Annual...", or redundant year prefixes like "2026 ...".
-- Use the official, professional title (e.g. "Minnesota OCD Conference 2026", "Self-Direction Connection Conference 2026", "Ellie Mental Health Franchise Conference 2026").
-- Do NOT output multiple entries for the same event on the same date.
+function buildUserPrompt(locStr, typeStr, rawText, dateWindow) {
+  const start = dateWindow?.startDate || "upcoming";
+  const end = dateWindow?.endDate || "upcoming";
+  return `Target Criteria:
+- Location: ${locStr} (Venue MUST be in Minnesota or Online)
+- Date Window: strictly between ${start} and ${end} (inclusive)
+- Preferred Categories: [${typeStr}]
 
-=========================================
-🏷️ FIELD REQUIREMENTS:
-=========================================
-- "category": Choose EXACTLY ONE of [${types}], copied VERBATIM. Do not invent or reword categories.
-- "ticketUrl": MUST be the actual event or ticket URL from the matching "Link" field. Never return "-" if a link is present.
-- "source": Website name or platform domain (e.g. "Eventbrite", "PredictHQ", "NACAC.org"). Never use bracketed citations like "[11]".
-- "venue": Exact physical venue inside the city (e.g. "Minneapolis Convention Center", "Saint Paul RiverCentre", or "Online").
-- "city": Host city with state (e.g. "Minneapolis, MN", "St. Paul, MN", "Bloomington, MN", "Online").
-- "time": Real start/end time (e.g. "09:00 AM - 04:00 PM"). If none found, leave empty string "".
+Candidate Raw Items:
+${rawText}
 
-Return ONLY a valid JSON array (no markdown code blocks, no backticks, no preamble):
-[{"id":"ev-1","title":"","organization":"","category":"","opportunityType":"","audienceType":"","date":"YYYY-MM-DD","time":"","venue":"","city":"","registrationDeadline":"-","proposalDeadline":"-","contactInfo":"https://...","status":"Confirmed","description":"","ticketUrl":"","source":""}]`;
-
-/**
- * 🚀 MAIN AI EXTRACTION:
- * Calls Claude Haiku Messages API to verify, deduplicate, and extract clean events from raw data
- */
-async function extractEventsWithClaude(
-  locations,
-  eventTypes,
-  rawEvents,
-  dateWindow,
-) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!isValidKey(apiKey))
-    throw new Error("ANTHROPIC_API_KEY is missing or invalid.");
-
-  const locStr = [locations].flat().join(", ") || "Minnesota";
-  const typeStr = [eventTypes].flat().join(", ") || "Conferences";
-
-  // Pre-filter raw events to remove exact title duplicates before sending to Claude
-  const seenRaw = new Set();
-  const dedupedRaw = rawEvents
-    .filter((e) => {
-      const k = (e.title || "").trim().toLowerCase();
-      return k && !seenRaw.has(k) && seenRaw.add(k);
-    })
-    .slice(0, 350);
-
-  const rawText = dedupedRaw
-    .map(
-      (e, i) =>
-        `Item #${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Time: ${e.time || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || e.snippet || ""}`,
-    )
-    .join("\n");
-
-  console.log(
-    `   🤖 [Claude AI] Verifying & Extracting ${dedupedRaw.length} candidate items for [${locStr}]...`,
-  );
-
-  // Anthropic Claude Messages API call
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
-      max_tokens: 8192,
-      messages: [
-        { role: "user", content: PROMPT(locStr, typeStr, rawText, dateWindow) },
-      ],
-    }),
-    signal: AbortSignal.timeout(50000),
-  });
-
-  const data = await res.json();
-  if (!res.ok)
-    throw new Error(`Claude (${res.status}): ${data.error?.message || ""}`);
-
-  // Response text se valid JSON array extract karein
-  const text = (data.content || []).map((c) => c.text || "").join("");
-  const start = text.indexOf("[");
-  if (start === -1) return [];
-
-  let parsed = [];
-  // Scan backwards for the matching closing bracket
-  for (let end = text.lastIndexOf("]"); end > start; end = text.lastIndexOf("]", end - 1)) {
-    try {
-      const candidate = JSON.parse(text.slice(start, end + 1));
-      if (Array.isArray(candidate)) {
-        parsed = candidate;
-        break;
-      }
-    } catch {
-      // continue scanning backwards
-    }
-  }
-
-  const rawList = Array.isArray(parsed) ? parsed : [];
-
-  // 🛡️ MULTI-LAYER CODE SAFETY SHIELD:
-  // 1. Strict Date Window Filter
-  // 2. Junk Blacklist Filter (No races, photoshoots, crafts)
-  // 3. Strict Minnesota Geo-Fence Filter (No D.C., Chicago, etc.)
-  // 4. Professional Event Type Validator
-  const validList = rawList.filter((e) => {
-    // 1. Date window verification
-    if (!e.date) return false;
-    const match = String(e.date).match(/\d{4}-\d{2}-\d{2}/);
-    const dateStr = match ? match[0] : "";
-    if (dateStr && dateWindow.startDate && dateWindow.endDate) {
-      if (dateStr < dateWindow.startDate || dateStr > dateWindow.endDate) return false;
-    }
-
-    // 2. Junk rejection (races, sports, photoshoots, crafts, pottery)
-    if (isJunkEvent(e.title || "", `${e.description || ""} ${e.venue || ""}`)) {
-      console.log(`   ⛔ [Shield Dropped Junk]: "${e.title}"`);
-      return false;
-    }
-
-    // 3. Minnesota State & City Geo-fence verification
-    if (!isMinnesotaOrVirtual(e.city || "", e.venue || "")) {
-      console.log(`   ⛔ [Shield Dropped Out-Of-State]: "${e.title}" in (${e.city || e.venue})`);
-      return false;
-    }
-
-    // 4. Professional Event Validator
-    if (!isProfessionalEvent(e.title || "", e.category || "", e.description || "")) {
-      console.log(`   ⛔ [Shield Dropped Non-Conference]: "${e.title}"`);
-      return false;
-    }
-
-    return true;
-  });
-
-  const mappedEvents = validList.map((e, idx) => formatSingleEvent(e, idx));
-  const dedupedEvents = deduplicateEventList(mappedEvents);
-  dedupedEvents.sort((a, b) => {
-    const tierDiff = (a.proximityTier || 99) - (b.proximityTier || 99);
-    if (tierDiff !== 0) return tierDiff;
-    return String(a.date || "").localeCompare(String(b.date || ""));
-  });
-  return dedupedEvents;
+Instructions:
+Evaluate candidates against exclusion rules and Minnesota geo-fence. Return ONLY a valid JSON array matching the schema.`;
 }
 
 function formatSingleEvent(e, idx = 0) {
-  let contact = (e.contactInfo || "").trim();
-  if (!contact || /not available|n\/a|^-$/i.test(contact)) {
-    const textSnippet = `${e.description || ""} ${e.snippet || ""}`;
-    const email = textSnippet.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)?.[0];
-    const phone = textSnippet.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g)?.[0];
-    contact = [email, phone].filter(Boolean).join(" | ") || (
-      e.ticketUrl && !e.ticketUrl.includes("google.com/search") ? e.ticketUrl : (e.ticketUrl || "")
-    );
-  }
-
-  let time = (e.time || "").trim();
-  if (/^(tba|tbh|-)$/i.test(time)) {
-    time = "";
-  }
-
-  const rawCategory = (e.category || e.opportunityType || e.type || "Conference / Summit").trim();
-  const finalCategory = !rawCategory || rawCategory === "undefined" ? "Conference / Summit" : rawCategory;
-
   const city = e.city || e.location || "Minnesota";
-  const normDate = normalizeDateKey(e.date) || e.date || "";
+  const id = generateEventSlug(e.title, e.date);
   return {
     ...e,
-    id: e.id || `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${idx + 1}`,
-    date: normDate,
-    category: finalCategory,
+    id,
+    date: normalizeDateKey(e.date) || e.date || "",
+    category: e.category || "Conference / Summit",
     city,
     location: city,
-    contactInfo: contact,
-    time,
+    contactInfo: (e.contactInfo || "").trim() || e.ticketUrl || "",
+    time: /^(tba|tbh|-)$/i.test(e.time || "") ? "" : (e.time || "").trim(),
     proximityTier: getProximityRank(city),
   };
 }
 
 function validateSingleEvent(e, dateWindow) {
-  if (!e || !e.title || !e.date) return false;
-  const match = String(e.date).match(/\d{4}-\d{2}-\d{2}/);
-  const dateStr = match ? match[0] : "";
-  if (dateStr && dateWindow?.startDate && dateWindow?.endDate) {
-    if (dateStr < dateWindow.startDate || dateStr > dateWindow.endDate) return false;
+  if (!e?.title) return false;
+  const d = normalizeDateKey(e.date);
+  if (dateWindow?.startDate && dateWindow?.endDate && d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    if (d < dateWindow.startDate || d > dateWindow.endDate) return false;
   }
-  if (isJunkEvent(e.title || "", `${e.description || ""} ${e.venue || ""}`)) return false;
-  if (!isMinnesotaOrVirtual(e.city || "", e.venue || "")) return false;
-  if (!isProfessionalEvent(e.title || "", e.category || "", e.description || "")) return false;
   return true;
 }
 
 /**
- * ⚡ STREAMING CLAUDE EXTRACTION:
- * Calls Claude with stream: true. Emits events via onEvent as soon as each JSON object completes.
+ * ⚡ REAL-TIME STREAMING CLAUDE EXTRACTION (with Anthropic Prompt Caching)
  */
-async function streamEventsWithClaude(
-  locations,
-  eventTypes,
-  rawEvents,
-  dateWindow,
-  { onEvent, onStatus } = {},
-) {
+async function streamEventsWithClaude(locations, eventTypes, rawEvents, dateWindow, { onEvent, onStatus } = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!isValidKey(apiKey))
-    throw new Error("ANTHROPIC_API_KEY is missing or invalid.");
+  if (!isValidKey(apiKey)) throw new Error("ANTHROPIC_API_KEY missing");
 
   const locStr = [locations].flat().join(", ") || "Minnesota";
   const typeStr = [eventTypes].flat().join(", ") || "Conferences";
 
-  // Pre-filter raw candidates to top 60 clean candidates for 3x speed boost
-  const seenRaw = new Set();
   const dedupedRaw = rawEvents
-    .filter((e) => {
-      const k = (e.title || "").trim().toLowerCase();
-      if (!k || seenRaw.has(k)) return false;
-      seenRaw.add(k);
-      if (isJunkEvent(e.title || "", e.snippet || e.description || "")) return false;
-      return true;
-    })
-    .slice(0, 60);
+    .filter((e, i, arr) => e.title && arr.findIndex((x) => x.title.toLowerCase() === e.title.toLowerCase()) === i)
+    .slice(0, 150);
 
   if (!dedupedRaw.length) return [];
+  onStatus?.({ message: `Claude analyzing ${dedupedRaw.length} candidates in real-time...` });
 
   const rawText = dedupedRaw
-    .map(
-      (e, i) =>
-        `Item #${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Time: ${e.time || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || e.snippet || ""}`,
-    )
+    .map((e, i) => `#${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || ""}`)
     .join("\n");
-
-  if (onStatus) {
-    onStatus({ message: `Claude AI analyzing ${dedupedRaw.length} candidates in real-time...` });
-  }
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -286,129 +106,77 @@ async function streamEventsWithClaude(
       "Content-Type": "application/json",
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
     },
     body: JSON.stringify({
       model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
-      max_tokens: 8192,
+      max_tokens: 4096,
       stream: true,
-      messages: [
-        { role: "user", content: PROMPT(locStr, typeStr, rawText, dateWindow) },
-      ],
+      system: [{ type: "text", text: SYSTEM_INSTRUCTIONS, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: buildUserPrompt(locStr, typeStr, rawText, dateWindow) }],
     }),
     signal: AbortSignal.timeout(50000),
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Claude (${res.status}): ${errText}`);
-  }
+  if (!res.ok) throw new Error(`Claude (${res.status}): ${await res.text()}`);
 
-  const collectedEvents = [];
-  let jsonBuffer = "";
+  const collected = [];
+  const seenKeys = new Set();
+  let buffer = "";
 
-  const extractJsonObjects = () => {
-    let depth = 0;
-    let inString = false;
-    let isEscaped = false;
-    let startIndex = -1;
-    let lastEnd = 0;
-
-    for (let i = 0; i < jsonBuffer.length; i++) {
-      const char = jsonBuffer[i];
-
-      if (inString) {
-        if (isEscaped) {
-          isEscaped = false;
-        } else if (char === "\\") {
-          isEscaped = true;
-        } else if (char === '"') {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (char === '"') {
-        inString = true;
-        continue;
-      }
-
-      if (char === "{") {
-        if (depth === 0) startIndex = i;
-        depth++;
-      } else if (char === "}") {
-        depth--;
-        if (depth === 0 && startIndex !== -1) {
-          const jsonSub = jsonBuffer.slice(startIndex, i + 1);
-          try {
-            const parsed = JSON.parse(jsonSub);
-            if (parsed && typeof parsed === "object") {
-              if (validateSingleEvent(parsed, dateWindow)) {
-                const formatted = formatSingleEvent(parsed, collectedEvents.length);
-                const fp = getTitleFingerprint(formatted.title);
-                const normDate = normalizeDateKey(formatted.date);
-
-                // Deduplicate within the same Claude stream
-                const alreadySeen = collectedEvents.some((c) => {
-                  const cFp = getTitleFingerprint(c.title);
-                  const cDate = normalizeDateKey(c.date);
-                  if (normDate && cDate && normDate !== cDate) return false;
-                  if (fp && cFp && fp === cFp) return true;
-                  if (fp && cFp && (fp.includes(cFp) || cFp.includes(fp))) {
-                    const minLen = Math.min(fp.length, cFp.length);
-                    const maxLen = Math.max(fp.length, cFp.length);
-                    if (minLen / maxLen >= 0.6) return true;
-                  }
-                  return false;
-                });
-
-                if (!alreadySeen) {
-                  collectedEvents.push(formatted);
-                  if (onEvent) onEvent(formatted);
-                }
-              }
+  const processBuffer = () => {
+    let start = -1, depth = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      if (buffer[i] === "{" && depth++ === 0) start = i;
+      if (buffer[i] === "}" && --depth === 0 && start !== -1) {
+        try {
+          const item = JSON.parse(buffer.slice(start, i + 1));
+          if (validateSingleEvent(item, dateWindow)) {
+            const ev = formatSingleEvent(item, collected.length);
+            const key = `${getTitleFingerprint(ev.title)}|${normalizeDateKey(ev.date)}`;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              collected.push(ev);
+              onEvent?.(ev);
             }
-            lastEnd = i + 1;
-          } catch (_) {}
-          startIndex = -1;
-        }
+          }
+        } catch (_) {}
+        buffer = buffer.slice(i + 1);
+        i = -1;
+        start = -1;
       }
-    }
-
-    if (lastEnd > 0) {
-      jsonBuffer = jsonBuffer.slice(lastEnd);
     }
   };
 
   const decoder = new TextDecoder();
-  let sseChunkBuffer = "";
-
   for await (const chunk of res.body) {
-    sseChunkBuffer += decoder.decode(chunk, { stream: true });
-    const lines = sseChunkBuffer.split("\n");
-    sseChunkBuffer = lines.pop();
-
-    for (const line of lines) {
+    const text = decoder.decode(chunk, { stream: true });
+    for (const line of text.split("\n")) {
       const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const jsonStr = trimmed.slice(5).trim();
-      if (jsonStr === "[DONE]") continue;
-
+      if (!trimmed.startsWith("data:") || trimmed.includes("[DONE]")) continue;
       try {
-        const payload = JSON.parse(jsonStr);
+        const payload = JSON.parse(trimmed.slice(5));
+        if (payload.type === "message_start" && payload.message?.usage) {
+          const u = payload.message.usage;
+          if (u.cache_read_input_tokens > 0) {
+            console.log(`   ⚡ [Claude Cache HIT] ${u.cache_read_input_tokens} cached tokens (~90% cost cut)`);
+          }
+        }
         if (payload.type === "content_block_delta" && payload.delta?.text) {
-          jsonBuffer += payload.delta.text;
-          extractJsonObjects();
+          buffer += payload.delta.text;
+          processBuffer();
         }
       } catch (_) {}
     }
   }
 
-  if (jsonBuffer.trim()) {
-    extractJsonObjects();
-  }
-
-  return collectedEvents;
+  processBuffer();
+  return collected;
 }
+
+// Minimal alias for backward compatibility
+const extractEventsWithClaude = (locs, types, raw, dates) =>
+  streamEventsWithClaude(locs, types, raw, dates);
 
 module.exports = {
   extractEventsWithClaude,

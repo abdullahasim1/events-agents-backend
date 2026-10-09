@@ -1,25 +1,30 @@
 const https = require("node:https");
 
-const get = (url, key) =>
-  new Promise((res, rej) =>
-    https.get(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }, family: 4 }, (r) => {
-      let d = "";
-      r.on("data", (c) => (d += c));
-      r.on("end", () => res(JSON.parse(d || "{}")));
-    }).on("error", rej)
-  );
+const formatIsoTime = (iso) => {
+  if (!iso || !iso.includes("T")) return "";
+  const [h, m] = iso.split("T")[1].slice(0, 5).split(":");
+  const hr = parseInt(h, 10);
+  return isNaN(hr) ? "" : `${hr % 12 || 12}:${m} ${hr >= 12 ? "PM" : "AM"}`;
+};
 
-function formatIsoTime(isoStr) {
-  if (!isoStr || !isoStr.includes("T")) return "";
-  const timePart = isoStr.split("T")[1];
-  if (!timePart) return "";
-  const [h, m] = timePart.split(":");
-  const hour = parseInt(h, 10);
-  if (isNaN(hour)) return "";
-  const period = hour >= 12 ? "PM" : "AM";
-  const h12 = hour % 12 || 12;
-  return `${h12}:${m} ${period}`;
-}
+const getJson = (url, key) =>
+  new Promise((resolve, reject) => {
+    https.get(
+      url,
+      { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }, family: 4 },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data || "{}"));
+          } catch (_) {
+            resolve({});
+          }
+        });
+      }
+    ).on("error", reject);
+  });
 
 /**
  * 🚀 PREDICTHQ EVENTS SEARCH:
@@ -33,45 +38,21 @@ async function fetchPredictHQEvents(
 ) {
   if (!key) return [];
   const city = String(location || "").split(",")[0].trim();
-  const typeStr = String(eventType || "").toLowerCase();
-
-  let topic = "conference";
-  if (/sleep/i.test(typeStr)) topic = "sleep conference";
-  else if (/brain injury|stroke/i.test(typeStr)) topic = "brain injury conference";
-  else if (/autism|ocd|disabilit/i.test(typeStr)) topic = "disabilities conference";
-  else if (/neuroscience|psychiatr/i.test(typeStr)) topic = "neuroscience conference";
-  else if (/mental|counsel/i.test(typeStr)) topic = "mental health conference";
-  else if (/education|school/i.test(typeStr)) topic = "education conference";
-  else if (/health|wellness/i.test(typeStr)) topic = "health conference";
-
-  const q = `${city} ${topic}`.trim();
-  const dateParams =
-    startDate && endDate ? `&active.gte=${startDate}&active.lte=${endDate}` : "";
-
-  const url = `https://api.predicthq.com/v1/events/?q=${encodeURIComponent(q)}&category=conferences,expos,community${dateParams}&limit=50`;
-  const data = await get(url, key);
+  const dateParams = startDate && endDate ? `&active.gte=${startDate}&active.lte=${endDate}` : "";
+  const url = `https://api.predicthq.com/v1/events/?q=${encodeURIComponent(city)}&category=conferences,expos&limit=50${dateParams}`;
+  const data = await getJson(url, key);
 
   return (data.results || []).map((e) => {
     const startTime = formatIsoTime(e.start_local || e.start);
     const endTime = formatIsoTime(e.end_local || e.end);
-    const realTime =
-      startTime && endTime && startTime !== endTime
-        ? `${startTime} - ${endTime}`
-        : startTime || "";
-
-    const hostCity = e.geo?.address?.locality
-      ? `${e.geo.address.locality}, MN`
-      : location;
+    const hostCity = e.geo?.address?.locality ? `${e.geo.address.locality}, MN` : location;
 
     return {
       title: e.title,
       category: e.category || "Conference / Summit",
-      date: e.start_local ? e.start_local.slice(0, 10) : (e.start ? e.start.slice(0, 10) : ""),
-      time: realTime,
-      venue:
-        (e.entities || []).find((x) => x.type === "venue")?.name ||
-        e.geo?.address?.formatted_address ||
-        "",
+      date: (e.start_local || e.start || "").slice(0, 10),
+      time: startTime && endTime && startTime !== endTime ? `${startTime} - ${endTime}` : startTime || "",
+      venue: (e.entities || []).find((x) => x.type === "venue")?.name || e.geo?.address?.formatted_address || "",
       city: hostCity,
       snippet: e.description || `Event in ${hostCity}`,
       url: `https://www.predicthq.com/events/${e.id}`,

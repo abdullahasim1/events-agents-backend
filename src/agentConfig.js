@@ -29,22 +29,17 @@ const DEFAULT_EVENT_TYPES = [
   "School-Based Health / Youth Mental Health / Healthcare-Education Summit",
   "Brain injury and stroke education/support conference",
   "Health & Fitness Expo / Healthcare Summit",
-  "Conference / Summit",
+  "Medical Healthcare Conference / Summit",
 ];
 
 const DEFAULT_DAYS = 7; // Exactly next 7 days
 
-// 4 Targeted High-Yield Sector Queries per city chunk (run concurrently):
-// 1. Mental Health, Counseling, Youth & School Conferences
-// 2. Intellectual & Developmental Disabilities, Autism, OCD & Special Ed
-// 3. Sleep Medicine, Neuroscience, Psychiatry, Brain Injury & Stroke
-// 4. Healthcare Leadership, Health & Fitness Expo, Healthcare Summit
-const BROAD_QUERIES = [
-  "mental health counseling youth school conference summit",
-  "intellectual developmental disabilities autism OCD special education conference",
-  "sleep medicine neuroscience psychiatry brain injury stroke conference",
-  "healthcare leadership medical wellness conference summit expo",
-];
+// 🎯 EXACT 1-TO-1 QUERIES:
+// Derived directly from the 10 categories above.
+// Slashes ('/') are converted to spaces for clean Google & Tavily search syntax.
+const BROAD_QUERIES = DEFAULT_EVENT_TYPES.map((t) =>
+  t.replace(/\//g, " ").replace(/\s+/g, " ").trim()
+);
 
 module.exports = {
   DEFAULT_LOCATIONS,
