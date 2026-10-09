@@ -10,8 +10,12 @@ async function fetchTavilyEvents(
   dateWindow = {},
   apiKey = process.env.TAVILY_API_KEY,
 ) {
-  const time =
-    `${dateWindow.monthName || ""} ${dateWindow.year || new Date().getFullYear()}`.trim();
+  const dateObj = dateWindow?.startDate ? new Date(dateWindow.startDate) : null;
+  const monthYear = dateObj && !isNaN(dateObj)
+    ? dateObj.toLocaleDateString("en-US", { month: "long", year: "numeric" })
+    : "2026";
+  const timeQualifier = String(eventType).includes(monthYear) ? "" : monthYear;
+  const searchStr = buildSearchQuery(eventType, location, timeQualifier);
 
   // 1. Tavily API call with advanced web search depth
   const res = await fetch("https://api.tavily.com/search", {
@@ -21,7 +25,7 @@ async function fetchTavilyEvents(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      query: buildSearchQuery(eventType, location, time),
+      query: searchStr,
       max_results: 100,
       search_depth: "basic",
     }),

@@ -1,95 +1,43 @@
 const express = require("express");
 const cors = require("cors");
-const { runCityChunk, runCityChunkStream, findEvents } = require("./runner");
-const { initDb, upsertEvents, getAllEvents, updateEvent, clearAllEvents } = require("./db");
-const { DEFAULT_LOCATIONS, DEFAULT_EVENT_TYPES, DEFAULT_DAYS } = require("./agentConfig");
+const { runCityChunkStream, runAllCitiesStream } = require("./runner");
+const { initDb, getAllEvents, updateEvent, clearAllEvents } = require("./db");
+const { DEFAULT_DAYS } = require("./agentConfig");
+const { getTitleFingerprint, normalizeDateKey } = require("./utils");
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
-// Initialize DB schema on cold start (non-blocking)
+// Initialize PostgreSQL schema on startup (non-blocking)
 initDb().catch((e) => console.error("⚠️ [DB Init Warning]:", e.message));
-
-/**
- * 🚀 SEARCH & FETCH CONTROLLER:
- * Handles incoming search requests and DB retrieval
- */
-const handleEvents = async (req, res) => {
-  const start = Date.now();
-  try {
-    const p = { ...req.query, ...req.body };
-
-    let locations = [p.locations || p.cities || p.location || p.city || ""]
-      .flat()
-      .join(",")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    let eventTypes = [p.eventTypes || p.types || p.eventType || p.type || ""]
-      .flat()
-      .join(",")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    // If pure GET with no params and not an explicit run trigger, return saved events from DB
-    if (!locations.length && !eventTypes.length && req.method === "GET" && !p.run) {
-      const saved = await getAllEvents();
-      let lastUpdated = null;
-      for (const e of saved) {
-        const t = e.updatedAt || e.createdAt;
-        if (t && (!lastUpdated || new Date(t) > new Date(lastUpdated))) {
-          lastUpdated = t;
-        }
-      }
-      return res.status(200).json({
-        success: true,
-        count: saved.length,
-        events: saved,
-        fromDb: true,
-        lastFetchedAt: lastUpdated || new Date().toISOString(),
-      });
-    }
-
-    // Default to Hardcoded Centralized Config if triggered with 1-click (e.g. POST /events or ?run=true)
-    if (!locations.length) locations = DEFAULT_LOCATIONS;
-    if (!eventTypes.length) eventTypes = DEFAULT_EVENT_TYPES;
-
-    const days = parseInt(p.days, 10) || DEFAULT_DAYS;
-
-    // Run parallel search agents + Claude AI
-    const events = await findEvents(locations, eventTypes, {
-      startDate: p.startDate || p.date || null,
-      days,
-    });
-
-    // Save/upsert to PostgreSQL
-    try {
-      if (events && events.length) {
-        await upsertEvents(events);
-      }
-    } catch (dbErr) {
-      console.error("⚠️ [DB Save Warning]:", dbErr.message);
-    }
-
-    const sec = ((Date.now() - start) / 1000).toFixed(2);
-    console.log(`✅ [Search] Returned & Saved ${events.length} events in ${sec}s`);
-
-    return res.status(200).json({ success: true, count: events.length, events });
-  } catch (error) {
-    console.error("❌ [Server Error]:", error.message);
-    return res.status(500).json({ success: false, message: "Failed to retrieve events." });
-  }
-};
 
 const router = express.Router();
 
 router.get("/health", (_, res) => res.json({ status: "ok", message: "Events Agent API is running!" }));
-router.get("/events", handleEvents);
-router.post("/events", handleEvents);
+
+/**
+ * 📥 Fetch saved events from PostgreSQL
+ */
+router.all("/events", async (_, res) => {
+  try {
+    const saved = await getAllEvents();
+    return res.status(200).json({
+      success: true,
+      count: saved.length,
+      events: saved,
+      fromDb: true,
+      lastFetchedAt: saved[0]?.updatedAt || new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("❌ [Events Fetch Error]:", error.message);
+    return res.status(500).json({ success: false, message: "Failed to retrieve events." });
+  }
+});
+
+/**
+ * ✏️ Update single event fields
+ */
 router.patch("/events/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -103,66 +51,10 @@ router.patch("/events/:id", async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
-router.delete("/events", async (_, res) => {
-  try {
-    await clearAllEvents();
-    res.json({ success: true, message: "All events cleared from database." });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 /**
- * 📋 RUN CONFIG: cities + event types the agent covers.
- * Single source of truth for the UI — no duplicate hardcoding in the frontend.
- */
-router.get("/events/run/cities", (_, res) => {
-  res.json({
-    success: true,
-    cities: DEFAULT_LOCATIONS,
-    types: DEFAULT_EVENT_TYPES,
-    defaultDays: DEFAULT_DAYS,
-    totalCells: DEFAULT_LOCATIONS.length * DEFAULT_EVENT_TYPES.length,
-  });
-});
-
-/**
- * 🧩 CHUNKED RUN: process ONE city (broad provider queries → Claude
- * classifies into exact types → enrichment → upsert → ledger).
- * The UI loops cities sequentially with per-city progress; every city
- * is ledger-tracked, so no city or event type is ever silently missed.
- */
-router.post("/events/run", async (req, res) => {
-  const start = Date.now();
-  try {
-    const p = { ...req.query, ...req.body };
-    const city = String(p.city || "").trim();
-    if (!city) {
-      return res.status(400).json({ success: false, message: "city is required" });
-    }
-
-    const result = await runCityChunk({
-      city,
-      runId: p.runId || undefined,
-      types: p.types || p.eventTypes || undefined,
-      startDate: p.startDate || p.date || null,
-      days: parseInt(p.days, 10) || DEFAULT_DAYS,
-    });
-
-    const sec = ((Date.now() - start) / 1000).toFixed(2);
-    console.log(`✅ [Chunk Run] ${city} done in ${sec}s`);
-    return res.status(200).json({ success: true, ...result });
-  } catch (err) {
-    console.error("❌ [Chunk Run Error]:", err.message);
-    return res
-      .status(500)
-      .json({ success: false, message: "City chunk run failed.", error: err.message });
-  }
-});
-
-/**
- * ⚡ REAL-TIME SSE STREAMING ROUTE:
- * Streams events progressively as Claude AI outputs each conference.
+ * ⚡ Real-Time SSE Streaming:
+ * Clears DB on every run, discovers fresh events for the date range, and streams them live
  */
 router.all("/events/stream", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -173,39 +65,55 @@ router.all("/events/stream", async (req, res) => {
 
   const sendEvent = (event, data) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (res.flush) res.flush();
   };
 
   const p = { ...req.query, ...req.body };
   const city = String(p.city || "").trim();
   const startDate = p.startDate || p.date || null;
-  const days = parseInt(p.days, 10) || DEFAULT_DAYS;
-
-  if (!city) {
-    sendEvent("error", { message: "city parameter is required" });
-    return res.end();
-  }
+  const endDate = p.endDate || null;
+  const days = p.endDate && p.startDate
+    ? Math.max(1, Math.round((new Date(p.endDate) - new Date(p.startDate)) / 86400000))
+    : (parseInt(p.days, 10) || DEFAULT_DAYS);
 
   try {
-    await runCityChunkStream({
-      city,
-      runId: p.runId || undefined,
-      types: p.types || p.eventTypes || undefined,
-      startDate,
-      days,
-      onEvent: (ev) => sendEvent("event", ev),
-      onStatus: (st) => sendEvent("status", st),
-    });
+    // 1. Clean DB on every agent run so only fresh data is kept
+    await clearAllEvents();
 
-    sendEvent("done", { success: true, city });
+    // 2. Stream fresh live AI events as they are discovered
+    const onLiveEvent = (ev) => {
+      sendEvent("event", { ...ev, isNew: true });
+    };
+
+    if (city) {
+      await runCityChunkStream({
+        city,
+        types: p.types || p.eventTypes,
+        startDate,
+        endDate,
+        days,
+        onEvent: onLiveEvent,
+      });
+    } else {
+      await runAllCitiesStream({
+        types: p.types || p.eventTypes,
+        startDate,
+        endDate,
+        days,
+        onEvent: onLiveEvent,
+      });
+    }
+
+    sendEvent("done", { success: true });
   } catch (err) {
-    console.error(`❌ [SSE Error for ${city}]:`, err.message);
-    sendEvent("error", { message: err.message, city });
+    console.error("❌ [SSE Stream Error]:", err.message);
+    sendEvent("error", { message: err.message });
   } finally {
     res.end();
   }
 });
 
 app.use("/api", router);
-app.use("/", router);
+app.use(router);
 
 module.exports = app;

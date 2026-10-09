@@ -1,16 +1,12 @@
 const { fetchSerpApiEvents } = require("./serpService");
 const { fetchTavilyEvents } = require("./tavilyService");
 const { fetchPredictHQEvents } = require("./predictHQService");
-const {
-  extractEventsWithClaude,
-  streamEventsWithClaude,
-} = require("./claudeService");
+const { streamEventsWithClaude } = require("./claudeService");
 const { isValidKey, getDateWindow } = require("./utils");
 const { upsertEvents } = require("./db");
 const {
   DEFAULT_LOCATIONS,
   DEFAULT_EVENT_TYPES,
-  DEFAULT_DAYS,
   BROAD_QUERIES,
 } = require("./agentConfig");
 
@@ -21,74 +17,39 @@ const PROVIDERS = [
 ];
 
 /**
- * 🏙️ CITY CHUNK RUN:
- * Executes 4 sector queries across active providers in parallel,
- * verifies with Claude AI, and saves directly to Neon PostgreSQL.
+ * 🔍 Queries all active search providers in parallel for broad city queries
  */
-async function runCityChunk({ city, runId, types, startDate, days } = {}) {
-  const cleanCity = String(city || "").trim();
-  if (!cleanCity) throw new Error("city is required");
-
-  const typeList = [types].flat().map((s) => String(s).trim()).filter(Boolean);
-  const finalTypes = typeList.length ? typeList : DEFAULT_EVENT_TYPES;
-  const dateWindow = getDateWindow(days, startDate);
-  const finalRunId =
-    runId || `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
+async function searchCityCandidates(city, dateWindow) {
   const active = PROVIDERS.filter((p) => isValidKey(p.key));
-  console.log(
-    `🔍 [Chunk] City: ${cleanCity} | Providers: ${active.map((a) => a.name).join(", ") || "none"}`
-  );
+  const tasks = [];
 
-  // 1. Parallel search across active providers for all 4 sectors
-  const searchTasks = [];
+  // 1. PredictHQ is city-level (call once per city to avoid duplicate API calls)
+  const phq = active.find((p) => p.name === "PredictHQ");
+  if (phq) {
+    tasks.push(phq.fn(city, "", dateWindow, phq.key).catch(() => []));
+  }
+
+  // 2. Web search engines (SerpApi & Tavily) run for each sharp sector query
+  const webProviders = active.filter((p) => p.name !== "PredictHQ");
   for (const q of BROAD_QUERIES) {
-    for (const p of active) {
-      searchTasks.push(p.fn(cleanCity, q, dateWindow, p.key).catch(() => []));
+    for (const p of webProviders) {
+      tasks.push(p.fn(city, q, dateWindow, p.key).catch(() => []));
     }
   }
-  const rawEvents = (await Promise.all(searchTasks)).flat();
 
-  // 2. Claude AI verification & strict 7-day date filter
-  let events = [];
-  if (rawEvents.length) {
-    events = await extractEventsWithClaude(
-      [cleanCity],
-      finalTypes,
-      rawEvents,
-      dateWindow
-    );
-  }
-
-  // 3. Save to Neon PostgreSQL
-  try {
-    if (events.length) await upsertEvents(events);
-  } catch (dbErr) {
-    console.error("⚠️ [Chunk DB Save Warning]:", dbErr.message);
-  }
-
-  console.log(`✅ [Chunk] ${cleanCity}: ${events.length} events`);
-  return {
-    runId: finalRunId,
-    city: cleanCity,
-    status: "done",
-    eventsFound: events.length,
-    startDate: dateWindow.startDate,
-    endDate: dateWindow.endDate,
-    events,
-  };
+  const results = await Promise.all(tasks);
+  return results.flat();
 }
 
 /**
  * ⚡ REAL-TIME CITY CHUNK STREAM:
- * Executes 4 sector queries across active providers, then streams events
- * one-by-one in real-time as Claude outputs them.
+ * Searches providers and streams events progressively through Claude AI & PostgreSQL
  */
 async function runCityChunkStream({
   city,
-  runId,
   types,
   startDate,
+  endDate,
   days,
   onEvent = () => {},
   onStatus = () => {},
@@ -98,34 +59,13 @@ async function runCityChunkStream({
 
   const typeList = [types].flat().map((s) => String(s).trim()).filter(Boolean);
   const finalTypes = typeList.length ? typeList : DEFAULT_EVENT_TYPES;
-  const dateWindow = getDateWindow(days, startDate);
-  const finalRunId =
-    runId || `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const dateWindow = getDateWindow(days, startDate, endDate);
 
-  const active = PROVIDERS.filter((p) => isValidKey(p.key));
+  onStatus({ step: "search", message: `Searching providers for ${cleanCity}...`, city: cleanCity });
+  const rawEvents = await searchCityCandidates(cleanCity, dateWindow);
 
-  onStatus({
-    step: "search",
-    message: `Searching Google, Tavily & PredictHQ for ${cleanCity}...`,
-    city: cleanCity,
-  });
+  onStatus({ step: "ai", message: `Found candidates. Claude AI analyzing in real-time...`, city: cleanCity });
 
-  // 1. Parallel search across active providers for all 4 sectors
-  const searchTasks = [];
-  for (const q of BROAD_QUERIES) {
-    for (const p of active) {
-      searchTasks.push(p.fn(cleanCity, q, dateWindow, p.key).catch(() => []));
-    }
-  }
-  const rawEvents = (await Promise.all(searchTasks)).flat();
-
-  onStatus({
-    step: "ai",
-    message: `Found candidate events. Claude AI analyzing in real-time...`,
-    city: cleanCity,
-  });
-
-  // 2. Stream events through Claude AI in real-time
   let events = [];
   if (rawEvents.length) {
     events = await streamEventsWithClaude(
@@ -135,52 +75,59 @@ async function runCityChunkStream({
       dateWindow,
       {
         onEvent: async (ev) => {
-          // Immediately save each event to PostgreSQL
-          try {
-            await upsertEvents([ev]);
-          } catch (e) {
-            console.error("⚠️ [Stream DB Save Warning]:", e.message);
-          }
-          // Immediately emit to frontend SSE stream!
+          upsertEvents([ev]).catch((e) => console.error("⚠️ [DB Save]:", e.message));
           onEvent(ev);
         },
         onStatus,
-      },
+      }
     );
   }
 
-  onStatus({
-    step: "done",
-    message: `Completed ${cleanCity}: ${events.length} events verified`,
-    city: cleanCity,
-  });
-
-  return {
-    runId: finalRunId,
-    city: cleanCity,
-    status: "done",
-    eventsFound: events.length,
-    startDate: dateWindow.startDate,
-    endDate: dateWindow.endDate,
-    events,
-  };
+  onStatus({ step: "done", message: `Completed ${cleanCity}: ${events.length} events verified`, city: cleanCity });
+  return events;
 }
 
 /**
- * 🚀 MULTI-CITY RUN (Used if monolithic /events endpoint is triggered):
+ * 🚀 ALL CITIES STREAM:
+ * Runs all target cities with concurrency of 3 and streams events progressively
  */
-async function findEvents(
-  locations = DEFAULT_LOCATIONS,
-  types = DEFAULT_EVENT_TYPES,
-  { days, startDate } = {}
-) {
-  const locList = [locations].flat().filter(Boolean);
-  const results = await Promise.all(
-    locList.map((city) =>
-      runCityChunk({ city, types, startDate, days }).catch(() => ({ events: [] }))
-    )
-  );
-  return results.flatMap((r) => r.events || []);
+async function runAllCitiesStream({
+  cities = DEFAULT_LOCATIONS,
+  types,
+  startDate,
+  endDate,
+  days,
+  onEvent = () => {},
+  onStatus = () => {},
+} = {}) {
+  const cityList = [cities].flat().filter(Boolean);
+  const CONCURRENCY = 3;
+
+  for (let i = 0; i < cityList.length; i += CONCURRENCY) {
+    const batch = cityList.slice(i, i + CONCURRENCY);
+    onStatus({ message: `Searching ${batch.join(", ")}...` });
+    await Promise.all(
+      batch.map((city) =>
+        runCityChunkStream({ city, types, startDate, endDate, days, onEvent, onStatus }).catch((err) =>
+          console.warn(`[Stream Error] ${city}:`, err.message)
+        )
+      )
+    );
+  }
 }
 
-module.exports = { runCityChunk, runCityChunkStream, findEvents };
+// Minimal aliases for backward compatibility
+const runCityChunk = (opts) => runCityChunkStream(opts);
+const findEvents = async (locations, types, opts) => {
+  const list = [];
+  await runAllCitiesStream({ cities: locations, types, ...opts, onEvent: (e) => list.push(e) });
+  return list;
+};
+
+module.exports = {
+  searchCityCandidates,
+  runCityChunkStream,
+  runAllCitiesStream,
+  runCityChunk,
+  findEvents,
+};

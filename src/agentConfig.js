@@ -1,10 +1,9 @@
 /**
  * 🎯 EXACT SHEET CONFIGURATION (Outreach & Conferences):
- * Extracted directly from every single tab & row of the user's Google Sheet.
- * Covers every specific city and every conference/event type listed in the sheet.
+ * Covers all Minnesota event locations and healthcare conference types.
  */
 
-// All cities extracted directly from the sheet's event locations
+// All cities where Minnesota healthcare & medical events take place
 const DEFAULT_LOCATIONS = [
   "Minneapolis, MN",
   "St. Paul, MN",
@@ -15,35 +14,66 @@ const DEFAULT_LOCATIONS = [
   "Minnetonka, MN",
   "Plymouth, MN",
   "St. Cloud, MN",
+  "Rochester, MN",
+  "Duluth, MN",
   "Minnesota",
 ];
 
-// All distinct event types extracted directly from the sheet
+// All distinct event categories covering client's exact 4 pillars
 const DEFAULT_EVENT_TYPES = [
+  // Pillar 1: Professional Conferences & Biohacking / Brain Health
   "Mental Health / Counseling Professional Conference",
-  "Education / School Counseling / National Conference",
+  "Brain Health / Peak Performance / Biohacking Conference",
+  "Neuroscience / Psychiatry / Research",
   "Intellectual & Developmental Disabilities / Autism / Research Conference",
   "Sleep medicine professional conference",
-  "Neuroscience / Psychiatry / Research",
-  "Neuroscience / Healthcare Leadership",
-  "School-Based Health / Youth Mental Health / Healthcare-Education Summit",
   "Brain injury and stroke education/support conference",
-  "Health & Fitness Expo / Healthcare Summit",
-  "Conference / Summit",
+  "Education / School Counseling / National Conference",
+  "School-Based Health / Youth Mental Health / Healthcare-Education Summit",
+  "Medical Healthcare Conference / Summit",
+
+  // Pillar 2: Local Gatherings & Community Expos (Vendor Table)
+  "Health & Fitness Expo / Marathon Expo / 5k race",
+  "Community Wellness Event / Holistic Wellness Fair",
+  "Farmers Market / Local Vendor Community Gathering",
+  "Art fair / Community festival vendor booth",
+
+  // Pillar 3: Silent Auctions
+  "School / Education Silent Auction Fundraiser",
+  "Charity / Non-Profit Silent Auction Benefit",
+
+  // Pillar 4: Charitable Events & Sponsorship
+  "Charity Gala / Benefit Gala / Philanthropy Sponsorship",
+  "Charity Golf Tournament / Fundraiser Sponsorship",
 ];
 
-const DEFAULT_DAYS = 7; // Exactly next 7 days
+const DEFAULT_DAYS = 7;
 
-// 4 Targeted High-Yield Sector Queries per city chunk (run concurrently):
-// 1. Mental Health, Counseling, Youth & School Conferences
-// 2. Intellectual & Developmental Disabilities, Autism, OCD & Special Ed
-// 3. Sleep Medicine, Neuroscience, Psychiatry, Brain Injury & Stroke
-// 4. Healthcare Leadership, Health & Fitness Expo, Healthcare Summit
 const BROAD_QUERIES = [
-  "mental health counseling youth school conference summit",
-  "intellectual developmental disabilities autism OCD special education conference",
-  "sleep medicine neuroscience psychiatry brain injury stroke conference",
-  "healthcare leadership medical wellness conference summit expo",
+  // 1. Conferences & Brain Health
+  "mental health counseling professional conference",
+  "brain health peak performance biohacking conference summit",
+  "neuroscience psychiatry research summit",
+  "intellectual developmental disabilities autism conference",
+  "sleep medicine professional conference",
+  "brain injury stroke education support conference",
+  "education school counseling conference",
+  "school based youth mental health summit",
+  "medical healthcare leadership conference",
+
+  // 2. Local Gatherings & Vendor Tables
+  "health fitness expo marathon expo 5k race",
+  "community wellness event holistic wellness fair",
+  "farmers market local community vendor gathering",
+  "art fair community festival vendor table",
+
+  // 3. Silent Auctions
+  "school silent auction fundraiser benefit",
+  "charity nonprofit silent auction fundraiser",
+
+  // 4. Charitable & Sponsorships
+  "charity gala benefit gala dinner sponsorship",
+  "charity golf tournament fundraiser sponsorship",
 ];
 
 module.exports = {
