@@ -49,6 +49,7 @@ async function runCityChunkStream({
   city,
   types,
   startDate,
+  endDate,
   days,
   onEvent = () => {},
   onStatus = () => {},
@@ -58,7 +59,7 @@ async function runCityChunkStream({
 
   const typeList = [types].flat().map((s) => String(s).trim()).filter(Boolean);
   const finalTypes = typeList.length ? typeList : DEFAULT_EVENT_TYPES;
-  const dateWindow = getDateWindow(days, startDate);
+  const dateWindow = getDateWindow(days, startDate, endDate);
 
   onStatus({ step: "search", message: `Searching providers for ${cleanCity}...`, city: cleanCity });
   const rawEvents = await searchCityCandidates(cleanCity, dateWindow);
@@ -94,6 +95,7 @@ async function runAllCitiesStream({
   cities = DEFAULT_LOCATIONS,
   types,
   startDate,
+  endDate,
   days,
   onEvent = () => {},
   onStatus = () => {},
@@ -106,7 +108,7 @@ async function runAllCitiesStream({
     onStatus({ message: `Searching ${batch.join(", ")}...` });
     await Promise.all(
       batch.map((city) =>
-        runCityChunkStream({ city, types, startDate, days, onEvent, onStatus }).catch((err) =>
+        runCityChunkStream({ city, types, startDate, endDate, days, onEvent, onStatus }).catch((err) =>
           console.warn(`[Stream Error] ${city}:`, err.message)
         )
       )

@@ -1,10 +1,9 @@
 /**
  * 🎯 EXACT SHEET CONFIGURATION (Outreach & Conferences):
- * Extracted directly from every single tab & row of the user's Google Sheet.
- * Covers every specific city and every conference/event type listed in the sheet.
+ * Covers all Minnesota event locations and healthcare conference types.
  */
 
-// All cities extracted directly from the sheet's event locations
+// All cities where Minnesota healthcare & medical events take place
 const DEFAULT_LOCATIONS = [
   "Minneapolis, MN",
   "St. Paul, MN",
@@ -15,31 +14,67 @@ const DEFAULT_LOCATIONS = [
   "Minnetonka, MN",
   "Plymouth, MN",
   "St. Cloud, MN",
+  "Rochester, MN",
+  "Duluth, MN",
   "Minnesota",
 ];
 
-// All distinct event types extracted directly from the sheet
+// All distinct event categories covering client's exact 4 pillars
 const DEFAULT_EVENT_TYPES = [
+  // Pillar 1: Professional Conferences & Biohacking / Brain Health
   "Mental Health / Counseling Professional Conference",
-  "Education / School Counseling / National Conference",
+  "Brain Health / Peak Performance / Biohacking Conference",
+  "Neuroscience / Psychiatry / Research",
   "Intellectual & Developmental Disabilities / Autism / Research Conference",
   "Sleep medicine professional conference",
-  "Neuroscience / Psychiatry / Research",
-  "Neuroscience / Healthcare Leadership",
-  "School-Based Health / Youth Mental Health / Healthcare-Education Summit",
   "Brain injury and stroke education/support conference",
-  "Health & Fitness Expo / Healthcare Summit",
+  "Education / School Counseling / National Conference",
+  "School-Based Health / Youth Mental Health / Healthcare-Education Summit",
   "Medical Healthcare Conference / Summit",
+
+  // Pillar 2: Local Gatherings & Community Expos (Vendor Table)
+  "Health & Fitness Expo / Marathon Expo / 5k race",
+  "Community Wellness Event / Holistic Wellness Fair",
+  "Farmers Market / Local Vendor Community Gathering",
+  "Art fair / Community festival vendor booth",
+
+  // Pillar 3: Silent Auctions
+  "School / Education Silent Auction Fundraiser",
+  "Charity / Non-Profit Silent Auction Benefit",
+
+  // Pillar 4: Charitable Events & Sponsorship
+  "Charity Gala / Benefit Gala / Philanthropy Sponsorship",
+  "Charity Golf Tournament / Fundraiser Sponsorship",
 ];
 
-const DEFAULT_DAYS = 7; // Exactly next 7 days
+const DEFAULT_DAYS = 7;
 
-// 🎯 EXACT 1-TO-1 QUERIES:
-// Derived directly from the 10 categories above.
-// Slashes ('/') are converted to spaces for clean Google & Tavily search syntax.
-const BROAD_QUERIES = DEFAULT_EVENT_TYPES.map((t) =>
-  t.replace(/\//g, " ").replace(/\s+/g, " ").trim()
-);
+const BROAD_QUERIES = [
+  // 1. Conferences & Brain Health
+  "mental health counseling professional conference",
+  "brain health peak performance biohacking conference summit",
+  "neuroscience psychiatry research summit",
+  "intellectual developmental disabilities autism conference",
+  "sleep medicine professional conference",
+  "brain injury stroke education support conference",
+  "education school counseling conference",
+  "school based youth mental health summit",
+  "medical healthcare leadership conference",
+
+  // 2. Local Gatherings & Vendor Tables
+  "health fitness expo marathon expo 5k race",
+  "community wellness event holistic wellness fair",
+  "farmers market local community vendor gathering",
+  "art fair community festival vendor table",
+
+  // 3. Silent Auctions
+  "school silent auction fundraiser benefit",
+  "charity nonprofit silent auction fundraiser",
+
+  // 4. Charitable & Sponsorships
+  "charity gala benefit gala dinner sponsorship",
+  "charity golf tournament fundraiser sponsorship",
+];
 
 module.exports = {
   DEFAULT_LOCATIONS,

@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { runCityChunkStream, runAllCitiesStream } = require("./runner");
-const { initDb, getAllEvents } = require("./db");
+const { initDb, getAllEvents, updateEvent, clearAllEvents } = require("./db");
 const { DEFAULT_DAYS } = require("./agentConfig");
 const { getTitleFingerprint, normalizeDateKey } = require("./utils");
 
@@ -36,8 +36,25 @@ router.all("/events", async (_, res) => {
 });
 
 /**
+ * ✏️ Update single event fields
+ */
+router.patch("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await updateEvent(id, req.body);
+    if (!updated) {
+      return res.status(404).json({ success: false, message: "Event not found or no valid fields to update" });
+    }
+    return res.status(200).json({ success: true, event: updated });
+  } catch (err) {
+    console.error("❌ [Event Update Error]:", err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
  * ⚡ Real-Time SSE Streaming:
- * Streams DB events smoothly at ~160ms intervals, while running live AI searches concurrently
+ * Clears DB on every run, discovers fresh events for the date range, and streams them live
  */
 router.all("/events/stream", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -54,52 +71,39 @@ router.all("/events/stream", async (req, res) => {
   const p = { ...req.query, ...req.body };
   const city = String(p.city || "").trim();
   const startDate = p.startDate || p.date || null;
-  const days = parseInt(p.days, 10) || DEFAULT_DAYS;
+  const endDate = p.endDate || null;
+  const days = p.endDate && p.startDate
+    ? Math.max(1, Math.round((new Date(p.endDate) - new Date(p.startDate)) / 86400000))
+    : (parseInt(p.days, 10) || DEFAULT_DAYS);
 
   try {
-    const saved = await getAllEvents();
-    const existingKeys = new Set(
-      saved.map((e) => `${getTitleFingerprint(e.title)}|${normalizeDateKey(e.date)}`)
-    );
+    // 1. Clean DB on every agent run so only fresh data is kept
+    await clearAllEvents();
 
-    // 1. Stream DB events smoothly at a readable natural pace (~320ms per row)
-    const streamDbEvents = async () => {
-      for (const ev of saved) {
-        sendEvent("event", { ...ev, fromDb: true });
-        await new Promise((r) => setTimeout(r, 320));
-      }
-    };
-
-    // 2. Concurrently run live AI searches across cities - only stream TRULY new events
+    // 2. Stream fresh live AI events as they are discovered
     const onLiveEvent = (ev) => {
-      const key = `${getTitleFingerprint(ev.title)}|${normalizeDateKey(ev.date)}`;
-      if (!existingKeys.has(key)) {
-        existingKeys.add(key);
-        sendEvent("event", { ...ev, isNew: true });
-      }
+      sendEvent("event", { ...ev, isNew: true });
     };
 
-    const streamLiveAi = async () => {
-      if (city) {
-        return runCityChunkStream({
-          city,
-          types: p.types || p.eventTypes,
-          startDate,
-          days,
-          onEvent: onLiveEvent,
-        });
-      } else {
-        return runAllCitiesStream({
-          types: p.types || p.eventTypes,
-          startDate,
-          days,
-          onEvent: onLiveEvent,
-        });
-      }
-    };
+    if (city) {
+      await runCityChunkStream({
+        city,
+        types: p.types || p.eventTypes,
+        startDate,
+        endDate,
+        days,
+        onEvent: onLiveEvent,
+      });
+    } else {
+      await runAllCitiesStream({
+        types: p.types || p.eventTypes,
+        startDate,
+        endDate,
+        days,
+        onEvent: onLiveEvent,
+      });
+    }
 
-    // Execute both in parallel
-    await Promise.all([streamDbEvents(), streamLiveAi()]);
     sendEvent("done", { success: true });
   } catch (err) {
     console.error("❌ [SSE Stream Error]:", err.message);

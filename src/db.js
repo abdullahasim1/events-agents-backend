@@ -44,6 +44,7 @@ async function initDb() {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_events_fingerprint_date 
       ON events (title_fingerprint, LOWER(COALESCE(date, '')));
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS electricity_ordered VARCHAR(50) DEFAULT 'No';
     `);
   } catch (err) {
     console.error("❌ [DB Init Error]:", err.message);
@@ -58,9 +59,8 @@ const UPSERT_QUERY = `
   ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW()
   )
-  ON CONFLICT (title_fingerprint, LOWER(COALESCE(date, '')))
+  ON CONFLICT (id)
   DO UPDATE SET
-    id = CASE WHEN events.id LIKE 'ev-%' THEN EXCLUDED.id ELSE events.id END,
     title = CASE WHEN LENGTH(EXCLUDED.title) >= LENGTH(events.title) THEN EXCLUDED.title ELSE events.title END,
     venue = COALESCE(NULLIF(EXCLUDED.venue, ''), events.venue),
     ticket_url = CASE WHEN EXCLUDED.ticket_url != '#' AND EXCLUDED.ticket_url != '' THEN EXCLUDED.ticket_url ELSE events.ticket_url END,
@@ -71,17 +71,17 @@ const UPSERT_QUERY = `
 `;
 
 async function upsertEvents(events = []) {
-  if (!process.env.DATABASE_URL || !events.length) return events;
+  if (!pool || !process.env.DATABASE_URL || !events.length) return events;
   try {
-    await Promise.all(
-      events.map((e) => {
+    for (const e of events) {
+      try {
         const title = e.title || "Untitled Event";
         const id = e.id && !e.id.startsWith("ev-1") && !e.id.startsWith("Item")
           ? e.id
           : generateEventSlug(title, e.date);
         const contact = e.contactInfo || e.contact_info || e.ticketUrl || e.ticket_url || e.url || "";
         const audience = e.audienceType || e.audience_type || "";
-        return pool.query(UPSERT_QUERY, [
+        await pool.query(UPSERT_QUERY, [
           id,
           title,
           getTitleFingerprint(title) || "event",
@@ -101,35 +101,40 @@ async function upsertEvents(events = []) {
           e.ticketUrl || e.ticket_url || e.url || "#",
           e.source || "Web",
         ]);
-      })
-    );
+      } catch (singleErr) {
+        // If unique constraint violation on fingerprint+date (code 23505), ignore duplicate variant
+        if (singleErr.code === "23505") {
+          // Already saved canonical version
+          continue;
+        }
+        console.warn(`⚠️ [DB Item Warning]: ${singleErr.message}`);
+      }
+    }
   } catch (err) {
     console.error("❌ [DB Save Error]:", err.message);
   }
 }
 
+const EDITABLE_COLS = new Set([
+  "status", "outreach_timing", "proposal_deadline", "registration_deadline",
+  "exhibit_registered", "payment_completed", "set_up_time", "electricity_ordered",
+  "misc_info", "notes"
+]);
+
 async function getAllEvents() {
   if (!pool || !process.env.DATABASE_URL) return [];
   const res = await pool.query(`
-    SELECT
-      id, title, organization, category,
-      opportunity_type AS "opportunityType",
-      opportunity_type AS "opportunity_type",
-      audience_type AS "audienceType",
-      audience_type AS "audience_type",
-      date, time, venue, city, city AS location,
-      registration_deadline AS "registrationDeadline",
-      registration_deadline AS "registration_deadline",
-      proposal_deadline AS "proposalDeadline",
-      proposal_deadline AS "proposal_deadline",
-      contact_info AS "contactInfo",
-      contact_info AS "contact_info",
-      status, description, description AS notes,
-      ticket_url AS "ticketUrl",
-      ticket_url AS "ticket_url",
-      source,
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
+    SELECT *,
+      city AS location,
+      COALESCE(set_up_time, time, 'TBD') AS "setUpTime",
+      COALESCE(outreach_timing, '-') AS "outreachTiming",
+      COALESCE(proposal_deadline, '-') AS "proposalDeadline",
+      COALESCE(registration_deadline, '-') AS "registrationDeadline",
+      COALESCE(exhibit_registered, 'No') AS "exhibitRegistered",
+      COALESCE(payment_completed, 'No') AS "paymentCompleted",
+      COALESCE(electricity_ordered, 'No') AS "electricityOrdered",
+      COALESCE(misc_info, '-') AS "miscInfo",
+      COALESCE(notes, description, '-') AS notes
     FROM events
     ORDER BY created_at DESC;
   `);
@@ -140,9 +145,40 @@ async function getAllEvents() {
   }));
 }
 
+async function updateEvent(id, fields = {}) {
+  if (!pool || !id) return null;
+  const entries = Object.entries(fields)
+    .map(([k, v]) => [k.replace(/([A-Z])/g, "_$1").toLowerCase(), v])
+    .filter(([col]) => EDITABLE_COLS.has(col));
+
+  if (!entries.length) return null;
+
+  const setClauses = entries.map(([col], idx) => `${col} = $${idx + 1}`);
+  const values = entries.map(([, val]) => typeof val === "boolean" ? (val ? "Yes" : "No") : String(val).trim());
+  values.push(id);
+
+  const res = await pool.query(
+    `UPDATE events SET ${setClauses.join(", ")}, updated_at = NOW() WHERE id = $${values.length} RETURNING *;`,
+    values
+  );
+  return res.rows[0] || null;
+}
+
+async function clearAllEvents() {
+  if (!pool || !process.env.DATABASE_URL) return;
+  try {
+    await pool.query("DELETE FROM events;");
+    console.log("🧹 [DB Cleared] All events removed for fresh run.");
+  } catch (err) {
+    console.error("❌ [Clear DB Error]:", err.message);
+  }
+}
+
 module.exports = {
   pool,
   initDb,
   upsertEvents,
   getAllEvents,
+  updateEvent,
+  clearAllEvents,
 };

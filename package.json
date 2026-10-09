@@ -4,7 +4,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node --no-network-family-autoselection src/server.js",
-    "dev": "node --no-network-family-autoselection --watch src/server.js"
+    "dev": "node --no-network-family-autoselection --watch-path=src src/server.js"
   },
   "keywords": [],
   "author": "",
