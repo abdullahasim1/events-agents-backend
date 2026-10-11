@@ -74,11 +74,68 @@ function formatSingleEvent(e, idx = 0) {
 
 function validateSingleEvent(e, dateWindow) {
   if (!e?.title) return false;
+  const titleLower = e.title.toLowerCase();
+  if (/merriam-webster|thesaurus|wikipedia|dictionary|archives|schedule|hotel|flight/i.test(titleLower)) return false;
+  if (/photoshoot|mini-session|pub crawl|bar crawl|happy hour|karaoke/i.test(titleLower)) return false;
+
   const d = normalizeDateKey(e.date);
-  if (dateWindow?.startDate && dateWindow?.endDate && d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-    if (d < dateWindow.startDate || d > dateWindow.endDate) return false;
-  }
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+
+  if (dateWindow?.startDate && d < dateWindow.startDate) return false;
+  if (dateWindow?.endDate && d > dateWindow.endDate) return false;
   return true;
+}
+
+function fallbackParseEvents(rawEvents, dateWindow, onEvent) {
+  const seen = new Set();
+  const list = [];
+  for (const raw of rawEvents) {
+    if (!raw.title) continue;
+    const titleLower = raw.title.toLowerCase();
+
+    // 1. Strict Junk Exclusions (No dictionary, wikipedia, generic schedules)
+    if (/merriam-webster|thesaurus|wikipedia|dictionary|archives|schedule|hotel|flight/i.test(titleLower)) continue;
+    if (/photoshoot|mini-session|pub crawl|bar crawl|happy hour|karaoke/i.test(titleLower)) continue;
+
+    // 2. Strict Valid Date Requirement (No TBA or missing dates)
+    const dateKey = normalizeDateKey(raw.date);
+    if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
+
+    // 3. Strict Date Window Filter
+    if (dateWindow?.startDate && dateKey < dateWindow.startDate) continue;
+    if (dateWindow?.endDate && dateKey > dateWindow.endDate) continue;
+
+    const titleFp = getTitleFingerprint(raw.title);
+    const key = `${titleFp}|${dateKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const ev = formatSingleEvent(
+      {
+        title: raw.title,
+        organization: raw.organization || "",
+        category: raw.category || "Conference / Summit",
+        opportunityType: raw.opportunityType || "Professional Conference",
+        audienceType: raw.audienceType || "General Audience",
+        date: dateKey,
+        time: raw.time || "",
+        venue: raw.venue || raw.city || "Minnesota",
+        city: raw.city || "Minnesota",
+        registrationDeadline: "-",
+        proposalDeadline: "-",
+        contactInfo: raw.url || raw.ticketUrl || "",
+        status: "Confirmed",
+        description: raw.snippet || raw.description || raw.title,
+        ticketUrl: raw.url || raw.ticketUrl || "",
+        source: raw.source || "PredictHQ",
+      },
+      list.length,
+    );
+
+    list.push(ev);
+    onEvent?.(ev);
+  }
+  return list;
 }
 
 /**
@@ -86,41 +143,54 @@ function validateSingleEvent(e, dateWindow) {
  */
 async function streamEventsWithClaude(locations, eventTypes, rawEvents, dateWindow, { onEvent, onStatus } = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!isValidKey(apiKey)) throw new Error("ANTHROPIC_API_KEY missing");
-
   const locStr = [locations].flat().join(", ") || "Minnesota";
   const typeStr = [eventTypes].flat().join(", ") || "Conferences";
 
   const dedupedRaw = rawEvents
     .filter((e, i, arr) => e.title && arr.findIndex((x) => x.title.toLowerCase() === e.title.toLowerCase()) === i)
-    .slice(0, 250);
+    .slice(0, 150);
 
   if (!dedupedRaw.length) return [];
+
+  if (!isValidKey(apiKey)) {
+    console.warn("⚠️ [Claude AI]: ANTHROPIC_API_KEY missing. Using direct candidate parser.");
+    return fallbackParseEvents(dedupedRaw, dateWindow, onEvent);
+  }
   onStatus?.({ message: `Claude analyzing ${dedupedRaw.length} candidates in real-time...` });
 
   const rawText = dedupedRaw
     .map((e, i) => `#${i + 1} | Source: ${e.source || "Web"} | Title: ${e.title} | Date: ${e.date || ""} | Venue: ${e.venue || ""} | Link: ${e.ticketUrl || e.url || ""} | Info: ${e.description || ""}`)
     .join("\n");
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "prompt-caching-2024-07-31",
-    },
-    body: JSON.stringify({
-      model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
-      max_tokens: 4096,
-      stream: true,
-      system: [{ type: "text", text: SYSTEM_INSTRUCTIONS, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: buildUserPrompt(locStr, typeStr, rawText, dateWindow) }],
-    }),
-    signal: AbortSignal.timeout(50000),
-  });
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
+      body: JSON.stringify({
+        model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
+        max_tokens: 4096,
+        stream: true,
+        system: [{ type: "text", text: SYSTEM_INSTRUCTIONS, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: buildUserPrompt(locStr, typeStr, rawText, dateWindow) }],
+      }),
+      signal: AbortSignal.timeout(50000),
+    });
 
-  if (!res.ok) throw new Error(`Claude (${res.status}): ${await res.text()}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`⚠️ [Claude AI Fallback]: (${res.status}): ${errText}. Falling back to direct candidate parser.`);
+      return fallbackParseEvents(dedupedRaw, dateWindow, onEvent);
+    }
+  } catch (fetchErr) {
+    console.warn(`⚠️ [Claude AI Fallback]: ${fetchErr.message}. Falling back to direct candidate parser.`);
+    return fallbackParseEvents(dedupedRaw, dateWindow, onEvent);
+  }
 
   const collected = [];
   const seenKeys = new Set();
